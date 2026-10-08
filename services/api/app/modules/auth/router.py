@@ -13,7 +13,7 @@ from app.core.security import (
     hash_token,
     verify_password,
 )
-from app.models import Organization, RefreshToken, User
+from app.models import BusinessSettings, Organization, RefreshToken, Shop, User
 from app.schemas.auth import (
     LoginRequest,
     MeResponse,
@@ -56,10 +56,21 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
-    # Organization + owner user are created in ONE transaction
+    # Organization + default shop + settings + owner user: ONE transaction
     org = Organization(name=data.business_name, owner_name=data.full_name)
     db.add(org)
     db.flush()
+
+    # Default shop + settings are created in the same transaction
+    db.add(Shop(organization_id=org.id, name=org.name, is_default=True))
+    db.add(
+        BusinessSettings(
+            organization_id=org.id,
+            invoice_template="professional",
+            invoice_prefix="INV",
+            invoice_number_padding=5,
+        )
+    )
 
     user = User(
         organization_id=org.id,
