@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.local
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+.expo/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Docker data
+.docker-data/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
