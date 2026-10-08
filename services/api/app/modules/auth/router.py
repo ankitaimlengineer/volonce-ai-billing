@@ -1,13 +1,53 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_current_user, get_db
-from app.core.security import create_access_token, hash_password, verify_password
-from app.models import Organization, User
-from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse
+from app.core.security import (
+    create_access_token,
+    generate_refresh_token,
+    hash_password,
+    hash_token,
+    verify_password,
+)
+from app.models import Organization, RefreshToken, User
+from app.schemas.auth import (
+    LoginRequest,
+    MeResponse,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+def _issue_tokens(db: Session, user: User, setup_completed: bool) -> TokenResponse:
+    """Create access + refresh token. Only the refresh token HASH is stored."""
+    raw_refresh = generate_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(raw_refresh),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(days=settings.refresh_token_days),
+        )
+    )
+    db.commit()
+
+    access = create_access_token(
+        str(user.id),
+        str(user.organization_id) if user.organization_id else None,
+        user.role,
+    )
+    return TokenResponse(
+        access_token=access,
+        refresh_token=raw_refresh,
+        setup_completed=setup_completed,
+    )
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -19,7 +59,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     # Organization + owner user are created in ONE transaction
     org = Organization(name=data.business_name, owner_name=data.full_name)
     db.add(org)
-    db.flush()  # gets org.id without committing
+    db.flush()
 
     user = User(
         organization_id=org.id,
@@ -32,8 +72,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
-    token = create_access_token(str(user.id), str(org.id), user.role)
-    return TokenResponse(access_token=token, setup_completed=org.setup_completed)
+    return _issue_tokens(db, user, org.setup_completed)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -46,12 +85,38 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account disabled")
 
     org = db.get(Organization, user.organization_id) if user.organization_id else None
-    token = create_access_token(
-        str(user.id), str(user.organization_id) if user.organization_id else None, user.role
+    return _issue_tokens(db, user, org.setup_completed if org else False)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
+    record = db.scalar(
+        select(RefreshToken).where(RefreshToken.token_hash == hash_token(data.refresh_token))
     )
-    return TokenResponse(
-        access_token=token, setup_completed=org.setup_completed if org else False
+    now = datetime.now(timezone.utc)
+    if record is None or record.revoked_at is not None or record.expires_at < now:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+
+    user = db.get(User, record.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
+
+    # Rotation: old token becomes invalid immediately
+    record.revoked_at = now
+    db.commit()
+
+    org = db.get(Organization, user.organization_id) if user.organization_id else None
+    return _issue_tokens(db, user, org.setup_completed if org else False)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(data: RefreshRequest, db: Session = Depends(get_db)):
+    record = db.scalar(
+        select(RefreshToken).where(RefreshToken.token_hash == hash_token(data.refresh_token))
     )
+    if record is not None and record.revoked_at is None:
+        record.revoked_at = datetime.now(timezone.utc)
+        db.commit()
 
 
 @router.get("/me", response_model=MeResponse)

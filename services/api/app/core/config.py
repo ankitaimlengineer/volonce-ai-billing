@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 15
+    refresh_token_days: int = 30
 
     @property
     def database_url(self) -> str:
