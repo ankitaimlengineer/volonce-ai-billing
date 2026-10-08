@@ -1,0 +1,10 @@
+export default function SetupPage() {
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-emerald-50 p-6">
+      <div className="rounded-2xl bg-white p-8 shadow text-center">
+        <h1 className="text-2xl font-bold text-emerald-800">Business Setup Wizard</h1>
+        <p className="mt-2 text-gray-600">Aa page Phase 2 ma banavishu.</p>
+      </div>
+    </main>
+  );
+}
