@@ -5,10 +5,13 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine
+from app.modules.auth.router import router as auth_router
 
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
+
+app.include_router(auth_router)
 
 
 @app.get("/api/v1/health")
