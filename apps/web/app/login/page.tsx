@@ -48,9 +48,9 @@ export default function LoginPage() {
         </button>
 
         <p className="mt-4 text-center text-sm text-gray-600">
-          Account nathi?{" "}
+          No Account?{" "}
           <Link href="/register" className="text-emerald-700 font-medium">
-            Register karo
+            Register
           </Link>
         </p>
       </form>
