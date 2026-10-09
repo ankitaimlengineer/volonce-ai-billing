@@ -62,6 +62,39 @@ export function authPost<T>(path: string, body?: unknown): Promise<T> {
   return request<T>("POST", path, body, true);
 }
 
+export async function authDelete(path: string): Promise<void> {
+  await request<void>("DELETE", path, undefined, true);
+}
+
+export async function authUpload(path: string, file: File): Promise<void> {
+  const token = localStorage.getItem("access_token");
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    let message = "Upload failed";
+    try {
+      const data = await res.json();
+      if (typeof data.detail === "string") message = data.detail;
+    } catch {}
+    throw new ApiError(message, res.status);
+  }
+}
+
+// Images are private, so we fetch them with the token and show them as a blob URL
+export async function authBlobUrl(path: string): Promise<string | null> {
+  const token = localStorage.getItem("access_token");
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
 // TEMPORARY: localStorage is only for development.
 // We will move tokens to httpOnly cookies in a later step.
 export function saveTokens(t: TokenResponse) {

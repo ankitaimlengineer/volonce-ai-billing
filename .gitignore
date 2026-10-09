@@ -23,3 +23,5 @@ venv/
 .DS_Store
 Thumbs.db
 .idea/
+# Local private file storage (dev)
+.storage/

@@ -38,4 +38,8 @@ class BusinessSettings(UUIDMixin, TimestampMixin, Base):
     invoice_prefix: Mapped[str] = mapped_column(String(20), default="INV", nullable=False)
     invoice_number_padding: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
 
-    # Logo / signature file keys (private storage) are added in step 2.4
+    # Logo / signature (private storage keys, never public URLs)
+    logo_key: Mapped[str | None] = mapped_column(String(300))
+    logo_content_type: Mapped[str | None] = mapped_column(String(50))
+    signature_key: Mapped[str | None] = mapped_column(String(300))
+    signature_content_type: Mapped[str | None] = mapped_column(String(50))

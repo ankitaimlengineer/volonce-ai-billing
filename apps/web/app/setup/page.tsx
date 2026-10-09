@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ApiError, authGet, authPost, authPut, clearTokens } from "@/lib/api";
+import { ApiError, authGet, authPut, clearTokens } from "@/lib/api";
 
 type Profile = {
   name: string;
@@ -119,10 +119,7 @@ export default function SetupPage() {
         pincode: form.pincode || null,
         gst_number: form.gst_number || null,
       });
-      // Branding and invoice template steps are added in 2.4 / 2.5.
-      // For now, finish setup right after the business info.
-      await authPost("/api/v1/business/complete-setup");
-      router.push("/dashboard");
+      router.push("/setup/branding");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         clearTokens();
@@ -149,7 +146,7 @@ export default function SetupPage() {
         onSubmit={handleSubmit}
         className="mx-auto w-full max-w-xl rounded-2xl bg-white p-8 shadow"
       >
-        <p className="text-sm font-medium text-emerald-700">Step 1 of 1 (haal)</p>
+        <p className="text-sm font-medium text-emerald-700">Step 1 of 2</p>
         <h1 className="text-2xl font-bold text-emerald-800">Business Setup</h1>
         <p className="mt-1 text-sm text-gray-600">
           Aa information invoice ma automatic aavshe.
