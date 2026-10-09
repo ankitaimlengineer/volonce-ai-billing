@@ -8,7 +8,6 @@ import {
   authBlobUrl,
   authDelete,
   authGet,
-  authPost,
   authUpload,
   clearTokens,
 } from "@/lib/api";
@@ -165,32 +164,16 @@ function ImageUploader({
 
 export default function BrandingPage() {
   const router = useRouter();
-  const [finishing, setFinishing] = useState(false);
-  const [error, setError] = useState("");
 
   const onAuthError = useCallback(() => {
     clearTokens();
     router.replace("/login");
   }, [router]);
 
-  async function finish() {
-    setError("");
-    setFinishing(true);
-    try {
-      await authPost("/api/v1/business/complete-setup");
-      router.push("/dashboard");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return onAuthError();
-      setError(err instanceof Error ? err.message : "Could not finish setup");
-    } finally {
-      setFinishing(false);
-    }
-  }
-
   return (
     <main className="min-h-screen bg-emerald-50 p-6">
       <div className="mx-auto w-full max-w-xl rounded-2xl bg-white p-8 shadow">
-        <p className="text-sm font-medium text-emerald-700">Step 2 of 2</p>
+        <p className="text-sm font-medium text-emerald-700">Step 2 of 3</p>
         <h1 className="text-2xl font-bold text-emerald-800">Logo ane Signature</h1>
         <p className="mt-1 text-sm text-gray-600">
           Aa ek j vaar upload karo. Darek invoice ma automatic aavshe. (Optional, pachi pan
@@ -211,21 +194,16 @@ export default function BrandingPage() {
           onAuthError={onAuthError}
         />
 
-        {error && (
-          <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
-        )}
-
         <div className="mt-8 flex items-center justify-between">
           <Link href="/setup" className="text-sm text-gray-600 hover:underline">
             ← Back
           </Link>
-          <button
-            onClick={finish}
-            disabled={finishing}
-            className="rounded-lg bg-emerald-700 px-6 py-2.5 font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
+          <Link
+            href="/setup/invoice"
+            className="rounded-lg bg-emerald-700 px-6 py-2.5 font-medium text-white hover:bg-emerald-800"
           >
-            {finishing ? "Finishing..." : "Finish Setup"}
-          </button>
+            Next →
+          </Link>
         </div>
       </div>
     </main>
