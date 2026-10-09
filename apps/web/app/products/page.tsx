@@ -86,9 +86,17 @@ export default function ProductsPage() {
       <div className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-emerald-800">Products</h1>
-          <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
-            ← Dashboard
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
+              ← Dashboard
+            </Link>
+            <Link
+              href="/products/new"
+              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
+            >
+              + Add Product
+            </Link>
+          </div>
         </div>
 
         <input
@@ -131,7 +139,14 @@ export default function ProductsPage() {
               )}
               {data?.items.map((p) => (
                 <tr key={p.id} className="border-b border-gray-200 text-gray-800">
-                  <td className="p-2 font-medium">{p.name}</td>
+                  <td className="p-2 font-medium">
+                    <Link
+                      href={`/products/${p.id}`}
+                      className="text-emerald-700 hover:underline"
+                    >
+                      {p.name}
+                    </Link>
+                  </td>
                   <td className="p-2">{p.sku ?? "-"}</td>
                   <td className="p-2">{p.unit}</td>
                   <td className="p-2 text-right">₹{p.purchase_price}</td>
