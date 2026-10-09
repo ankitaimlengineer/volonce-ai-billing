@@ -12,6 +12,7 @@ import {
   authUpload,
   clearTokens,
 } from "@/lib/api";
+import SignaturePad from "./SignaturePad";
 
 type Kind = "logo" | "signature";
 type Branding = { has_logo: boolean; has_signature: boolean };
@@ -27,16 +28,19 @@ function ImageUploader({
   kind,
   title,
   hint,
+  allowDraw = false,
   onAuthError,
 }: {
   kind: Kind;
   title: string;
   hint: string;
+  allowDraw?: boolean;
   onAuthError: () => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [drawing, setDrawing] = useState(false);
 
   // Initial load. The async work + cancel guard avoids setState-in-effect issues.
   useEffect(() => {
@@ -88,6 +92,21 @@ function ImageUploader({
     }
   }
 
+  async function handleDrawnFile(file: File) {
+    setError("");
+    try {
+      await authUpload(`/api/v1/business/${kind}`, file);
+      setUrl(await loadImage(kind));
+      setDrawing(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onAuthError();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Upload failed");
+    }
+  }
+
   return (
     <div className="mt-6 rounded-xl border border-gray-200 p-4">
       <h2 className="font-semibold text-gray-800">{title}</h2>
@@ -103,6 +122,10 @@ function ImageUploader({
       </div>
 
       {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+
+      {drawing && (
+        <SignaturePad onSave={handleDrawnFile} onCancel={() => setDrawing(false)} />
+      )}
 
       <div className="mt-3 flex gap-3">
         <label className="cursor-pointer rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800">
@@ -123,6 +146,16 @@ function ImageUploader({
             className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
           >
             Remove
+          </button>
+        )}
+        {allowDraw && !drawing && (
+          <button
+            type="button"
+            onClick={() => setDrawing(true)}
+            disabled={busy}
+            className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+          >
+            Draw
           </button>
         )}
       </div>
@@ -173,7 +206,8 @@ export default function BrandingPage() {
         <ImageUploader
           kind="signature"
           title="Authorized Signature"
-          hint="Safed background par signature no photo. Draw option pachi umerishu."
+          hint="Upload karo athva screen par draw karo."
+          allowDraw
           onAuthError={onAuthError}
         />
 
