@@ -9,6 +9,7 @@ from app.core.database import engine
 from app.modules.auth.router import router as auth_router
 from app.modules.business.branding import router as branding_router
 from app.modules.business.router import router as business_router
+from app.modules.catalog.images import router as product_images_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.debug.router import router as debug_router
 
@@ -28,6 +29,7 @@ app.include_router(auth_router)
 app.include_router(business_router)
 app.include_router(branding_router)
 app.include_router(catalog_router)
+app.include_router(product_images_router)
 app.include_router(debug_router)
 
 

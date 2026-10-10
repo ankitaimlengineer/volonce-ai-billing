@@ -61,3 +61,7 @@ class Product(UUIDMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # product image key is added in step 3.5
+
+        # Product photo (private storage key, never a public URL)
+    image_key: Mapped[str | None] = mapped_column(String(300))
+    image_content_type: Mapped[str | None] = mapped_column(String(50))
