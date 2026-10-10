@@ -2,12 +2,19 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles, require_setup_completed
 from app.models import InventoryMovement, Product, Shop, User
-from app.schemas.inventory import MovementCreate, MovementOut, StockOut
+from app.schemas.inventory import (
+    MovementCreate,
+    MovementOut,
+    StockOut,
+    StockReport,
+    StockRow,
+    StockSummary,
+)
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
@@ -46,6 +53,93 @@ def _find_product(db: Session, org_id: uuid.UUID, product_id: uuid.UUID, lock: b
     if p is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
     return p
+
+
+# NOTE: "/stock" is a fixed path, separate from "/products/{product_id}/stock"
+@router.get("/stock", response_model=StockReport)
+def stock_report(
+    status_filter: str | None = Query(default=None, alias="status", pattern="^(in|low|out)$"),
+    q: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(can_read),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+
+    # One query: stock of every product = SUM of its ledger
+    stock_sq = (
+        select(
+            InventoryMovement.product_id.label("pid"),
+            func.sum(InventoryMovement.quantity).label("qty"),
+        )
+        .where(InventoryMovement.organization_id == org_id)
+        .group_by(InventoryMovement.product_id)
+        .subquery()
+    )
+    qty = func.coalesce(stock_sq.c.qty, 0)
+
+    base = (
+        select(Product, qty.label("stock"))
+        .outerjoin(stock_sq, stock_sq.c.pid == Product.id)
+        .where(Product.organization_id == org_id, Product.is_active.is_(True))
+    )
+
+    # Summary is over ALL active products (not affected by filter/search)
+    all_rows = db.execute(base).all()
+    low = out = 0
+    value = Decimal("0")
+    for p, stock in all_rows:
+        stock = Decimal(stock)
+        if stock <= 0:
+            out += 1
+        elif stock <= p.min_stock:
+            low += 1
+        if stock > 0:
+            value += stock * p.purchase_price
+    summary = StockSummary(
+        total_products=len(all_rows),
+        low_stock=low,
+        out_of_stock=out,
+        stock_value=value.quantize(Decimal("0.01")),
+    )
+
+    stmt = base
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Product.name.ilike(like), Product.sku.ilike(like)))
+    if status_filter == "out":
+        stmt = stmt.where(qty <= 0)
+    elif status_filter == "low":
+        stmt = stmt.where(qty > 0, qty <= Product.min_stock)
+    elif status_filter == "in":
+        stmt = stmt.where(qty > Product.min_stock)
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.execute(
+        stmt.order_by(Product.name).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+
+    items = []
+    for p, stock in rows:
+        stock = Decimal(stock)
+        st = "out" if stock <= 0 else ("low" if stock <= p.min_stock else "in")
+        items.append(
+            StockRow(
+                product_id=p.id,
+                name=p.name,
+                sku=p.sku,
+                unit=p.unit,
+                min_stock=p.min_stock,
+                purchase_price=p.purchase_price,
+                current_stock=stock,
+                stock_value=(max(stock, Decimal("0")) * p.purchase_price).quantize(
+                    Decimal("0.01")
+                ),
+                status=st,
+            )
+        )
+    return StockReport(summary=summary, items=items, total=total, page=page, page_size=page_size)
 
 
 @router.post("/movements", response_model=MovementOut, status_code=status.HTTP_201_CREATED)

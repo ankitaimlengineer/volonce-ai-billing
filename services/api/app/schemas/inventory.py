@@ -43,3 +43,30 @@ class MovementOut(BaseModel):
 class StockOut(BaseModel):
     product_id: uuid.UUID
     current_stock: Decimal
+
+
+class StockRow(BaseModel):
+    product_id: uuid.UUID
+    name: str
+    sku: str | None
+    unit: str
+    min_stock: Decimal
+    purchase_price: Decimal
+    current_stock: Decimal
+    stock_value: Decimal
+    status: Literal["in", "low", "out"]
+
+
+class StockSummary(BaseModel):
+    total_products: int
+    low_stock: int
+    out_of_stock: int
+    stock_value: Decimal
+
+
+class StockReport(BaseModel):
+    summary: StockSummary
+    items: list[StockRow]
+    total: int
+    page: int
+    page_size: int
