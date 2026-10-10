@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, authGet, clearTokens } from "@/lib/api";
+import {
+  ApiError,
+  authDownload,
+  authGet,
+  authUploadJson,
+  clearTokens,
+} from "@/lib/api";
 
 type Product = {
   id: string;
@@ -30,9 +36,12 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [reload, setReload] = useState(0);
   const [data, setData] = useState<ProductList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const onAuthError = useCallback(() => {
     clearTokens();
@@ -77,19 +86,78 @@ export default function ProductsPage() {
     return () => {
       cancelled = true;
     };
-  }, [query, page, onAuthError, router]);
+  }, [query, page, reload, onAuthError, router]);
+
+  async function download(path: string, filename: string) {
+    setError("");
+    try {
+      await authDownload(path, filename);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return onAuthError();
+      setError(err instanceof Error ? err.message : "Download failed");
+    }
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError("");
+    setNotice("");
+    setImporting(true);
+    try {
+      const res = await authUploadJson<{ imported: number }>(
+        "/api/v1/products/import",
+        file
+      );
+      setNotice(`${res.imported} products import thaya.`);
+      setPage(1);
+      setReload((n) => n + 1);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return onAuthError();
+      setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
+  const secondary =
+    "rounded-lg border border-emerald-700 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50";
 
   return (
     <main className="min-h-screen bg-emerald-50 p-6">
       <div className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-emerald-800">Products</h1>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
               ← Dashboard
             </Link>
+            <button
+              onClick={() =>
+                download("/api/v1/products/import/template", "products_template.csv")
+              }
+              className={secondary}
+            >
+              Template
+            </button>
+            <label className={`${secondary} cursor-pointer`}>
+              {importing ? "Importing..." : "Import CSV"}
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                disabled={importing}
+                onChange={handleImport}
+              />
+            </label>
+            <button
+              onClick={() => download("/api/v1/products/export", "products.csv")}
+              className={secondary}
+            >
+              Export
+            </button>
             <Link
               href="/products/new"
               className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
@@ -106,8 +174,15 @@ export default function ProductsPage() {
           className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
 
+        {notice && (
+          <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
+            {notice}
+          </p>
+        )}
         {error && (
-          <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
+          <p className="mt-4 whitespace-pre-line rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </p>
         )}
 
         <div className="mt-4 overflow-x-auto">

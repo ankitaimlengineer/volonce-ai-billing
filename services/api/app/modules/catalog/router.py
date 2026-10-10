@@ -1,12 +1,14 @@
+import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles, require_setup_completed
 from app.models import Category, Product, Shop, User
+from app.modules.catalog.csv_io import build_csv, parse_csv, template_csv
 from app.schemas.catalog import (
     CategoryCreate,
     CategoryOut,
@@ -102,6 +104,119 @@ def delete_category(
         raise HTTPException(status.HTTP_409_CONFLICT, "Category has products")
     db.delete(cat)
     db.commit()
+
+
+# ---------- Products: CSV (must be BEFORE /products/{product_id}) ----------
+
+CSV_HEADERS = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+
+
+@router.get("/products/export")
+def export_products(user: User = Depends(can_read), db: Session = Depends(get_db)):
+    org_id = _org_id(user)
+    cats = {
+        c.id: c.name
+        for c in db.scalars(select(Category).where(Category.organization_id == org_id)).all()
+    }
+    products = db.scalars(
+        select(Product)
+        .where(Product.organization_id == org_id, Product.is_active.is_(True))
+        .order_by(Product.name)
+    ).all()
+    rows = [
+        [
+            p.name, p.sku, p.barcode, p.brand, cats.get(p.category_id, ""), p.unit,
+            p.pack_size, p.purchase_price, p.selling_price, p.mrp, p.tax_percent,
+            p.min_stock, "|".join(p.aliases), p.search_keywords,
+            json.dumps(p.attributes, ensure_ascii=False) if p.attributes else "",
+        ]
+        for p in products
+    ]
+    return Response(
+        content="\ufeff" + build_csv(rows),  # BOM so Excel reads Gujarati text correctly
+        media_type="text/csv; charset=utf-8",
+        headers={**CSV_HEADERS, "Content-Disposition": 'attachment; filename="products.csv"'},
+    )
+
+
+@router.get("/products/import/template")
+def import_template(user: User = Depends(can_read)):
+    return Response(
+        content="\ufeff" + template_csv(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            **CSV_HEADERS,
+            "Content-Disposition": 'attachment; filename="products_template.csv"',
+        },
+    )
+
+
+@router.post("/products/import")
+async def import_products(
+    file: UploadFile = File(...),
+    user: User = Depends(_write_user),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    raw = await file.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large (max 2 MB)")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "File UTF-8 CSV hovi joiye")
+
+    categories = {
+        c.name.lower(): c.id
+        for c in db.scalars(select(Category).where(Category.organization_id == org_id)).all()
+    }
+    rows, errors = parse_csv(text, categories)
+
+    # SKUs that already exist in this business
+    file_skus = [r["sku"] for r in rows if r["sku"]]
+    if file_skus:
+        existing = set(
+            db.scalars(
+                select(Product.sku).where(
+                    Product.organization_id == org_id, Product.sku.in_(file_skus)
+                )
+            ).all()
+        )
+        for r in rows:
+            if r["sku"] in existing:
+                errors.append(f"Line {r['line']}: SKU '{r['sku']}' pehla thi database ma che")
+
+    if errors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"message": "Import thayu nathi. Bhool sudharo.", "errors": errors[:50]},
+        )
+    if not rows:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "File ma koi row nathi")
+
+    shop_id = db.scalar(
+        select(Shop.id).where(Shop.organization_id == org_id, Shop.is_default.is_(True))
+    )
+
+    # Everything below is ONE transaction: all rows are saved or none
+    try:
+        for r in rows:
+            if r["category_name"] and r["category_id"] is None:
+                key = r["category_name"].lower()
+                if key not in categories:
+                    cat = Category(organization_id=org_id, name=r["category_name"][:100])
+                    db.add(cat)
+                    db.flush()
+                    categories[key] = cat.id
+                r["category_id"] = categories[key]
+            values = {k: v for k, v in r.items() if k not in ("line", "category_name")}
+            db.add(Product(organization_id=org_id, shop_id=shop_id, created_by=user.id, **values))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Import fail thayu (duplicate data)")
+
+    return {"imported": len(rows)}
 
 
 # ---------- Products ----------

@@ -15,6 +15,21 @@ export class ApiError extends Error {
   }
 }
 
+// Turns an API error body into a readable message.
+// Import errors come as { message, errors: [...] } and are shown line by line.
+function extractMessage(data: unknown, fallback: string): string {
+  const detail = (data as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return "Please check the entered details";
+  if (detail && typeof detail === "object") {
+    const d = detail as { message?: string; errors?: string[] };
+    if (Array.isArray(d.errors)) {
+      return [d.message, ...d.errors].filter(Boolean).join("\n");
+    }
+  }
+  return fallback;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -36,9 +51,7 @@ async function request<T>(
   if (!res.ok) {
     let message = "Something went wrong";
     try {
-      const data = await res.json();
-      if (typeof data.detail === "string") message = data.detail;
-      else if (Array.isArray(data.detail)) message = "Please check the entered details";
+      message = extractMessage(await res.json(), message);
     } catch {}
     throw new ApiError(message, res.status);
   }
@@ -66,7 +79,7 @@ export async function authDelete(path: string): Promise<void> {
   await request<void>("DELETE", path, undefined, true);
 }
 
-export async function authUpload(path: string, file: File): Promise<void> {
+async function uploadFile(path: string, file: File): Promise<Response> {
   const token = localStorage.getItem("access_token");
   const form = new FormData();
   form.append("file", file);
@@ -78,11 +91,36 @@ export async function authUpload(path: string, file: File): Promise<void> {
   if (!res.ok) {
     let message = "Upload failed";
     try {
-      const data = await res.json();
-      if (typeof data.detail === "string") message = data.detail;
+      message = extractMessage(await res.json(), message);
     } catch {}
     throw new ApiError(message, res.status);
   }
+  return res;
+}
+
+export async function authUpload(path: string, file: File): Promise<void> {
+  await uploadFile(path, file);
+}
+
+// Same as authUpload, but returns the JSON result (used by CSV import)
+export async function authUploadJson<T>(path: string, file: File): Promise<T> {
+  const res = await uploadFile(path, file);
+  return res.json() as Promise<T>;
+}
+
+// Downloads a file (e.g. CSV) using the token, then saves it
+export async function authDownload(path: string, filename: string): Promise<void> {
+  const token = localStorage.getItem("access_token");
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError("Download failed", res.status);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Images are private, so we fetch them with the token and show them as a blob URL
