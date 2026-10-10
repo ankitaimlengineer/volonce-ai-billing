@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ApiError, authDelete, authGet, authPost, authPut, clearTokens } from "@/lib/api";
+import {
+  ApiError,
+  authBlobUrl,
+  authDelete,
+  authGet,
+  authPost,
+  authPut,
+  authUpload,
+  clearTokens,
+} from "@/lib/api";
 
 type Category = { id: string; name: string };
 
@@ -82,6 +91,8 @@ export default function ProductForm({ initial }: { initial: ProductData }) {
   const [newCategory, setNewCategory] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
   const isEdit = Boolean(initial.id);
 
   useEffect(() => {
@@ -108,6 +119,22 @@ export default function ProductForm({ initial }: { initial: ProductData }) {
     };
   }, [router]);
 
+  // Load the product photo (private, fetched with the token)
+  useEffect(() => {
+    if (!initial.id) return;
+    let cancelled = false;
+    let created: string | null = null;
+    authBlobUrl(`/api/v1/products/${initial.id}/image`).then((u) => {
+      created = u;
+      if (!cancelled) setImageUrl(u);
+      else if (u) URL.revokeObjectURL(u);
+    });
+    return () => {
+      cancelled = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [initial.id]);
+
   function update<K extends keyof ProductData>(field: K, value: ProductData[K]) {
     setForm((f) => ({ ...f, [field]: value }));
   }
@@ -126,6 +153,40 @@ export default function ProductForm({ initial }: { initial: ProductData }) {
       setNewCategory("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add category");
+    }
+  }
+
+  async function handleImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !initial.id) return;
+    setError("");
+    setImageBusy(true);
+    try {
+      await authUpload(`/api/v1/products/${initial.id}/image`, file);
+      setImageUrl(await authBlobUrl(`/api/v1/products/${initial.id}/image`));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearTokens();
+        router.replace("/login");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function removeImage() {
+    if (!initial.id) return;
+    setImageBusy(true);
+    try {
+      await authDelete(`/api/v1/products/${initial.id}/image`);
+      setImageUrl(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remove failed");
+    } finally {
+      setImageBusy(false);
     }
   }
 
@@ -199,6 +260,45 @@ export default function ProductForm({ initial }: { initial: ProductData }) {
 
         {error && (
           <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
+        )}
+
+        {isEdit ? (
+          <div className="mt-4 flex items-center gap-4 rounded-xl border border-gray-200 p-3">
+            <div className="flex h-24 w-24 items-center justify-center rounded-lg bg-gray-50">
+              {imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={imageUrl} alt="Product" className="max-h-24 max-w-24 object-contain" />
+              ) : (
+                <span className="text-xs text-gray-400">No photo</span>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <label className="cursor-pointer rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800">
+                {imageBusy ? "Please wait..." : imageUrl ? "Change" : "Upload photo"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  disabled={imageBusy}
+                  onChange={handleImage}
+                />
+              </label>
+              {imageUrl && (
+                <button
+                  type="button"
+                  onClick={removeImage}
+                  disabled={imageBusy}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-gray-500">
+            Photo umervā mate pehla product save karo, pachi edit ma upload karo.
+          </p>
         )}
 
         <label className={label}>Product Name *</label>
