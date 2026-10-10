@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_db, require_roles, require_setup_completed
 from app.models import InventoryMovement, Product, Shop, User
 from app.schemas.inventory import (
+    ExpiryReport,
+    ExpiryRow,
     MovementCreate,
     MovementOut,
     StockOut,
@@ -53,6 +56,88 @@ def _find_product(db: Session, org_id: uuid.UUID, product_id: uuid.UUID, lock: b
     if p is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
     return p
+
+
+@router.get("/expiry", response_model=ExpiryReport)
+def expiry_report(
+    days: int = Query(default=30, ge=1, le=365),
+    status_filter: str | None = Query(
+        default=None, alias="status", pattern="^(expired|soon|ok)$"
+    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(can_read),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    today = date.today()
+    limit_date = today + timedelta(days=days)
+
+    qty = func.sum(InventoryMovement.quantity)
+    rows = db.execute(
+        select(
+            Product.id,
+            Product.name,
+            Product.sku,
+            Product.unit,
+            InventoryMovement.batch_no,
+            InventoryMovement.expiry_date,
+            qty.label("qty"),
+        )
+        .join(Product, Product.id == InventoryMovement.product_id)
+        .where(
+            InventoryMovement.organization_id == org_id,
+            Product.organization_id == org_id,
+            Product.is_active.is_(True),
+            InventoryMovement.expiry_date.is_not(None),
+        )
+        .group_by(
+            Product.id,
+            Product.name,
+            Product.sku,
+            Product.unit,
+            InventoryMovement.batch_no,
+            InventoryMovement.expiry_date,
+        )
+        .having(qty > 0)
+        .order_by(InventoryMovement.expiry_date, Product.name)
+    ).all()
+
+    items: list[ExpiryRow] = []
+    expired = soon = 0
+    for pid, name, sku, unit, batch, exp, q in rows:
+        left = (exp - today).days
+        st = "expired" if exp < today else ("soon" if exp <= limit_date else "ok")
+        if st == "expired":
+            expired += 1
+        elif st == "soon":
+            soon += 1
+        if status_filter and st != status_filter:
+            continue
+        items.append(
+            ExpiryRow(
+                product_id=pid,
+                name=name,
+                sku=sku,
+                unit=unit,
+                batch_no=batch,
+                expiry_date=exp,
+                quantity=Decimal(q),
+                days_left=left,
+                status=st,
+            )
+        )
+
+    total = len(items)
+    start = (page - 1) * page_size
+    return ExpiryReport(
+        expired=expired,
+        soon=soon,
+        items=items[start : start + page_size],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 # NOTE: "/stock" is a fixed path, separate from "/products/{product_id}/stock"

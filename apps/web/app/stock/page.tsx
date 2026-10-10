@@ -78,6 +78,8 @@ export default function StockPage() {
   const [type, setType] = useState("opening");
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
+  const [batch, setBatch] = useState("");
+  const [expiry, setExpiry] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
@@ -131,6 +133,8 @@ export default function StockPage() {
     setType("opening");
     setQty("");
     setNote("");
+    setBatch("");
+    setExpiry("");
     setFormError("");
   }
 
@@ -145,6 +149,8 @@ export default function StockPage() {
         movement_type: type,
         quantity: qty,
         note: note || null,
+        batch_no: batch || null,
+        expiry_date: expiry || null,
       });
       setTarget(null);
       setReload((n) => n + 1);
@@ -167,9 +173,17 @@ export default function StockPage() {
       <div className="mx-auto max-w-5xl">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-emerald-800">Stock</h1>
-          <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
-            ← Dashboard
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/stock/expiry"
+              className="text-sm font-medium text-emerald-700 hover:underline"
+            >
+              Expiry
+            </Link>
+            <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
+              ← Dashboard
+            </Link>
+          </div>
         </div>
 
         {data && (
@@ -280,7 +294,7 @@ export default function StockPage() {
       </div>
 
       {target && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-10 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
           <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="text-lg font-bold text-emerald-800">Stock adjust: {target.name}</h2>
             <p className="text-sm text-gray-500">
@@ -319,6 +333,30 @@ export default function StockPage() {
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mt-4 block text-sm font-medium text-gray-700">
+                  Batch (optional)
+                </label>
+                <input
+                  className={input}
+                  value={batch}
+                  onChange={(e) => setBatch(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mt-4 block text-sm font-medium text-gray-700">
+                  Expiry (optional)
+                </label>
+                <input
+                  type="date"
+                  className={input}
+                  value={expiry}
+                  onChange={(e) => setExpiry(e.target.value)}
+                />
+              </div>
+            </div>
 
             <div className="mt-6 flex justify-end gap-3">
               <button

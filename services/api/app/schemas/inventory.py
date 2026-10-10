@@ -70,3 +70,24 @@ class StockReport(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class ExpiryRow(BaseModel):
+    product_id: uuid.UUID
+    name: str
+    sku: str | None
+    unit: str
+    batch_no: str | None
+    expiry_date: date
+    quantity: Decimal
+    days_left: int
+    status: Literal["expired", "soon", "ok"]
+
+
+class ExpiryReport(BaseModel):
+    expired: int
+    soon: int
+    items: list[ExpiryRow]
+    total: int
+    page: int
+    page_size: int
