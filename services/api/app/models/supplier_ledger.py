@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -35,6 +36,8 @@ class SupplierLedger(UUIDMixin, Base):
             "entry_type IN ('purchase','payment','purchase_return','adjustment')",
             name="ck_sl_type",
         ),
+        # NULL keys are allowed many times, so old rows are not affected
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_sl_idempotency"),
         Index("ix_sl_org_supplier", "organization_id", "supplier_id", "created_at"),
     )
 
@@ -52,6 +55,7 @@ class SupplierLedger(UUIDMixin, Base):
     reference_type: Mapped[str | None] = mapped_column(String(30))
     reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     payment_method: Mapped[str | None] = mapped_column(String(20))
+    idempotency_key: Mapped[str | None] = mapped_column(String(100))
     note: Mapped[str | None] = mapped_column(Text)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(

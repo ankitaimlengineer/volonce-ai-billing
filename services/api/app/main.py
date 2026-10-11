@@ -14,6 +14,7 @@ from app.modules.catalog.router import router as catalog_router
 from app.modules.debug.router import router as debug_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.purchase.invoices import router as purchases_router
+from app.modules.purchase.ledger import router as supplier_ledger_router
 from app.modules.purchase.returns import router as purchase_returns_router
 from app.modules.purchase.suppliers import router as suppliers_router
 
@@ -36,6 +37,7 @@ app.include_router(catalog_router)
 app.include_router(product_images_router)
 app.include_router(inventory_router)
 app.include_router(suppliers_router)
+app.include_router(supplier_ledger_router)
 app.include_router(purchases_router)
 app.include_router(purchase_returns_router)
 app.include_router(debug_router)
