@@ -28,8 +28,12 @@ class SupplierOut(SupplierBase):
     is_active: bool
 
 
+class SupplierRow(SupplierOut):
+    outstanding: Decimal = Decimal("0")
+
+
 class SupplierList(BaseModel):
-    items: list[SupplierOut]
+    items: list[SupplierRow]
     total: int
     page: int
     page_size: int

@@ -8,12 +8,15 @@ export default function DashboardPage() {
       <div className="rounded-2xl bg-white p-8 shadow text-center">
         <h1 className="text-2xl font-bold text-emerald-800">Dashboard</h1>
         <p className="mt-2 text-gray-600">Setup pooru thayu che.</p>
-        <div className="mt-6 flex justify-center gap-3">
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Link href="/products" className={btn}>
             Products
           </Link>
           <Link href="/stock" className={btn}>
             Stock
+          </Link>
+          <Link href="/suppliers" className={btn}>
+            Suppliers
           </Link>
         </div>
       </div>

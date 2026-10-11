@@ -1,12 +1,19 @@
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles, require_setup_completed
-from app.models import Supplier, User
-from app.schemas.supplier import SupplierCreate, SupplierList, SupplierOut, SupplierUpdate
+from app.models import Supplier, SupplierLedger, User
+from app.schemas.supplier import (
+    SupplierCreate,
+    SupplierList,
+    SupplierOut,
+    SupplierRow,
+    SupplierUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/suppliers", tags=["suppliers"])
 
@@ -70,7 +77,30 @@ def list_suppliers(
     items = db.scalars(
         stmt.order_by(Supplier.name).offset((page - 1) * page_size).limit(page_size)
     ).all()
-    return SupplierList(items=items, total=total, page=page, page_size=page_size)
+
+    # One query for all suppliers on this page
+    sums = {
+        sid: (Decimal(c), Decimal(d))
+        for sid, c, d in db.execute(
+            select(
+                SupplierLedger.supplier_id,
+                func.coalesce(func.sum(SupplierLedger.credit), 0),
+                func.coalesce(func.sum(SupplierLedger.debit), 0),
+            )
+            .where(
+                SupplierLedger.organization_id == org_id,
+                SupplierLedger.supplier_id.in_([s.id for s in items]),
+            )
+            .group_by(SupplierLedger.supplier_id)
+        ).all()
+    }
+    rows = []
+    for s in items:
+        c, d = sums.get(s.id, (Decimal("0"), Decimal("0")))
+        row = SupplierRow.model_validate(s, from_attributes=True)
+        row.outstanding = s.opening_balance + c - d
+        rows.append(row)
+    return SupplierList(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.post("", response_model=SupplierOut, status_code=status.HTTP_201_CREATED)

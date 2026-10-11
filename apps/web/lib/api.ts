@@ -34,13 +34,15 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  auth = false
+  auth = false,
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth) {
     const token = localStorage.getItem("access_token");
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
+  if (extraHeaders) Object.assign(headers, extraHeaders);
 
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -71,8 +73,12 @@ export function authPut<T>(path: string, body: unknown): Promise<T> {
   return request<T>("PUT", path, body, true);
 }
 
-export function authPost<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>("POST", path, body, true);
+export function authPost<T>(
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>
+): Promise<T> {
+  return request<T>("POST", path, body, true, extraHeaders);
 }
 
 export async function authDelete(path: string): Promise<void> {
