@@ -4,6 +4,7 @@ from app.models.inventory_movement import InventoryMovement
 from app.models.organization import Organization
 from app.models.product import Product
 from app.models.purchase import PurchaseInvoice, PurchaseItem
+from app.models.purchase_return import PurchaseReturn, PurchaseReturnItem
 from app.models.refresh_token import RefreshToken
 from app.models.shop import Shop
 from app.models.supplier import Supplier
@@ -18,6 +19,8 @@ __all__ = [
     "Product",
     "PurchaseInvoice",
     "PurchaseItem",
+    "PurchaseReturn",
+    "PurchaseReturnItem",
     "RefreshToken",
     "Shop",
     "Supplier",
