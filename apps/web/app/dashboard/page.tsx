@@ -21,6 +21,9 @@ export default function DashboardPage() {
                     <Link href="/purchases" className={btn}>
             Purchases
           </Link>
+                    <Link href="/customers" className={btn}>
+            Customers
+          </Link>
         </div>
       </div>
     </main>
