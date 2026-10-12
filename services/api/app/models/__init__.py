@@ -12,6 +12,7 @@ from app.models.shop import Shop
 from app.models.supplier import Supplier
 from app.models.supplier_ledger import SupplierLedger
 from app.models.user import User
+from app.models.sales_return import SalesReturn, SalesReturnItem
 
 __all__ = [
     "BusinessSettings",
@@ -34,4 +35,6 @@ __all__ = [
     "Supplier",
     "SupplierLedger",
     "User",
+    "SalesReturn",
+    "SalesReturnItem",
 ]
