@@ -18,6 +18,7 @@ from app.modules.purchase.ledger import router as supplier_ledger_router
 from app.modules.purchase.returns import router as purchase_returns_router
 from app.modules.purchase.suppliers import router as suppliers_router
 from app.modules.sales.customers import router as customers_router
+from app.modules.sales.invoices import router as invoices_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -42,6 +43,7 @@ app.include_router(supplier_ledger_router)
 app.include_router(purchases_router)
 app.include_router(purchase_returns_router)
 app.include_router(customers_router)
+app.include_router(invoices_router)
 app.include_router(debug_router)
 
 
