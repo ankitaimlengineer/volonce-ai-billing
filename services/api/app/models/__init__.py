@@ -13,6 +13,7 @@ from app.models.supplier import Supplier
 from app.models.supplier_ledger import SupplierLedger
 from app.models.user import User
 from app.models.sales_return import SalesReturn, SalesReturnItem
+from app.models.expense import Expense
 
 __all__ = [
     "BusinessSettings",
@@ -37,4 +38,5 @@ __all__ = [
     "User",
     "SalesReturn",
     "SalesReturnItem",
+    "Expense",
 ]

@@ -27,6 +27,9 @@ export default function DashboardPage() {
                     <Link href="/billing/new" className={btn}>
             + New Bill
           </Link>
+                    <Link href="/invoices" className={btn}>
+            Invoices
+          </Link>
         </div>
       </div>
     </main>
