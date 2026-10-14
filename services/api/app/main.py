@@ -22,6 +22,7 @@ from app.modules.sales.invoices import router as invoices_router
 from app.modules.sales.returns import router as sales_returns_router
 from app.modules.reports.expenses import router as expenses_router
 from app.modules.reports.summary import router as reports_router
+from app.modules.reports.sales import router as sales_report_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -51,6 +52,7 @@ app.include_router(sales_returns_router)
 app.include_router(debug_router)
 app.include_router(expenses_router)
 app.include_router(reports_router)
+app.include_router(sales_report_router)
 
 
 @app.get("/api/v1/health")

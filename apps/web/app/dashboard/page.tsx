@@ -216,6 +216,7 @@ export default function DashboardPage() {
           <Link href="/suppliers" className={nav}>Suppliers</Link>
           <Link href="/purchases" className={nav}>Purchases</Link>
           <Link href="/expenses" className={nav}>Expenses</Link>
+          <Link href="/reports" className={nav}>Reports</Link>
         </div>
       </div>
     </main>
