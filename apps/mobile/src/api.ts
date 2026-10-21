@@ -24,6 +24,62 @@ export type Me = {
   setup_completed: boolean;
 };
 
+export type DashboardSummary = {
+  date_from: string;
+  date_to: string;
+  sales: number | string;
+  bills: number;
+  collections: number | string;
+  purchases: number | string;
+  cogs: number | string;
+  gross_profit: number | string;
+  margin_percent: number | string;
+  expenses: number | string;
+  net_profit: number | string;
+  receivable: number | string;
+  payable: number | string;
+  stock_value: number | string;
+  low_stock: number;
+  out_of_stock: number;
+};
+
+export type Product = {
+  id: string;
+  name: string;
+  sku?: string;
+  barcode?: string;
+  selling_price: number | string;
+  purchase_price: number | string;
+  tax_rate?: number;
+  unit?: string;
+  current_stock?: number;
+  is_active: boolean;
+};
+
+export type Customer = {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  current_balance?: number | string;
+};
+
+export type InvoiceItemCreate = {
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  tax_rate?: number;
+  discount?: number;
+};
+
+export type InvoiceCreatePayload = {
+  customer_id?: string;
+  items: InvoiceItemCreate[];
+  payment_mode?: "CASH" | "UPI" | "CREDIT" | "CARD";
+  paid_amount?: number;
+  notes?: string;
+};
+
 function message(data: unknown, fallback: string): string {
   const detail = (data as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return detail;
@@ -31,8 +87,17 @@ function message(data: unknown, fallback: string): string {
   return fallback;
 }
 
-async function raw(method: string, path: string, body?: unknown, token?: string | null) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+async function raw(
+  method: string,
+  path: string,
+  body?: unknown,
+  token?: string | null,
+  extraHeaders?: Record<string, string>
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(extraHeaders || {}),
+  };
   if (token) headers.Authorization = `Bearer ${token}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
@@ -62,7 +127,6 @@ async function parse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Uses the refresh token to get a new access token. Returns false if it fails.
 let refreshing: Promise<boolean> | null = null;
 async function refreshTokens(): Promise<boolean> {
   if (!refreshing) {
@@ -81,11 +145,15 @@ async function refreshTokens(): Promise<boolean> {
   return refreshing;
 }
 
-// Authenticated request: on 401 it refreshes once and retries
-export async function authRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
-  let res = await raw(method, path, body, await getAccess());
+export async function authRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>
+): Promise<T> {
+  let res = await raw(method, path, body, await getAccess(), extraHeaders);
   if (res.status === 401 && (await refreshTokens())) {
-    res = await raw(method, path, body, await getAccess());
+    res = await raw(method, path, body, await getAccess(), extraHeaders);
   }
   return parse<T>(res);
 }
@@ -109,3 +177,29 @@ export async function logout() {
   }
   await clearTokens();
 }
+
+// ---------------- BUSINESS / REPORT / POS APIS ----------------
+
+// Dashboard Metrics
+export const getDashboardSummary = (from?: string, to?: string) => {
+  let query = "";
+  if (from && to) query = `?date_from=${from}&date_to=${to}`;
+  return authRequest<DashboardSummary>("GET", `/api/v1/reports/summary${query}`);
+};
+
+// Catalog / Products
+export const getProducts = () =>
+  authRequest<{ items: Product[] } | Product[]>("GET", "/api/v1/products");
+
+// Customers
+export const getCustomers = () =>
+  authRequest<{ items: Customer[] } | Customer[]>("GET", "/api/v1/customers");
+
+// Create Invoice (Generates random Idempotency-Key)
+export const createInvoice = (payload: InvoiceCreatePayload) => {
+  const idempotencyKey =
+    "m-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 9);
+  return authRequest<any>("POST", "/api/v1/invoices", payload, {
+    "Idempotency-Key": idempotencyKey,
+  });
+};

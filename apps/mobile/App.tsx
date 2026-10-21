@@ -1,90 +1,103 @@
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { API_PREFIX, API_URL } from "./src/config";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { getMe, logout, Me } from "./src/api";
+import { getAccess } from "./src/storage";
 import { colors } from "./src/theme";
+import LoginScreen from "./src/screens/LoginScreen";
+import HomeScreen from "./src/screens/HomeScreen";
+import ProductsScreen from "./src/screens/ProductsScreen";
+import BillingScreen from "./src/screens/BillingScreen";
 
-type Health =
-  | { kind: "checking" }
-  | { kind: "ok"; database: string }
-  | { kind: "fail"; message: string };
+export type ScreenType = "home" | "products" | "billing";
 
-// Phase 8.1 foundation screen: proves the app can reach the real backend.
 export default function App() {
-  const [health, setHealth] = useState<Health>({ kind: "checking" });
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<Me | null>(null);
+  const [currentScreen, setCurrentScreen] = useState<ScreenType>("home");
 
-  const check = useCallback(async () => {
-    setHealth({ kind: "checking" });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+  const checkAuth = async () => {
     try {
-      const res = await fetch(`${API_URL}${API_PREFIX}/health`, { signal: controller.signal });
-      if (!res.ok) throw new Error(`Server e ${res.status} aapyo`);
-      const data = (await res.json()) as { status: string; database: string };
-      if (data.status !== "ok") throw new Error(`Database: ${data.database}`);
-      setHealth({ kind: "ok", database: data.database });
-    } catch (e) {
-      const aborted = e instanceof Error && e.name === "AbortError";
-      setHealth({
-        kind: "fail",
-        message: aborted
-          ? "Timeout. Wi-Fi, IP ane firewall check karo."
-          : e instanceof Error
-          ? e.message
-          : "Connect thayu nathi",
-      });
+      const token = await getAccess();
+      if (token) {
+        const me = await getMe();
+        setUser(me);
+      } else {
+        setUser(null);
+      }
+    } catch (err) {
+      console.log("Auth error:", err);
+      setUser(null);
     } finally {
-      clearTimeout(timer);
+      setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    check();
-  }, [check]);
+    checkAuth();
+  }, []);
+
+  const handleLogout = async () => {
+    setLoading(true);
+    await logout();
+    setUser(null);
+    setCurrentScreen("home");
+    setLoading(false);
+  };
+
+  const handleLoginSuccess = async () => {
+    setLoading(true);
+    await checkAuth();
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (!user) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <LoginScreen onLoggedIn={handleLoginSuccess} />
+      </SafeAreaProvider>
+    );
+  }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaProvider>
       <StatusBar style="dark" />
-      <View style={styles.card}>
-        <Text style={styles.brand}>VOLONCE AI BILLING</Text>
-        <Text style={styles.title}>Mobile app taiyar che</Text>
-        <Text style={styles.muted}>Backend: {API_URL}</Text>
-
-        <View style={styles.statusRow}>
-          {health.kind === "checking" && <ActivityIndicator color={colors.primary} />}
-          {health.kind === "ok" && (
-            <Text style={[styles.status, { color: colors.ok }]}>
-              ✅ Backend connected (database: {health.database})
-            </Text>
-          )}
-          {health.kind === "fail" && (
-            <Text style={[styles.status, { color: colors.danger }]}>❌ {health.message}</Text>
-          )}
-        </View>
-
-        <Pressable style={styles.button} onPress={check}>
-          <Text style={styles.buttonText}>Fari check karo</Text>
-        </Pressable>
-      </View>
-    </View>
+      {currentScreen === "home" && (
+        <HomeScreen
+          user={user}
+          onLogout={handleLogout}
+          navigation={{
+            navigate: (screen: string) => {
+              if (screen === "Billing") setCurrentScreen("billing");
+              if (screen === "Products") setCurrentScreen("products");
+            },
+          }}
+        />
+      )}
+      {currentScreen === "products" && (
+        <ProductsScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "billing" && (
+        <BillingScreen onBack={() => setCurrentScreen("home")} />
+      )}
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg, justifyContent: "center", padding: 20 },
-  card: { backgroundColor: colors.card, borderRadius: 16, padding: 22, elevation: 3 },
-  brand: { fontSize: 12, fontWeight: "700", color: colors.primary, letterSpacing: 1 },
-  title: { fontSize: 24, fontWeight: "700", color: colors.primaryDark, marginVertical: 6 },
-  muted: { fontSize: 12, color: colors.muted },
-  statusRow: { marginTop: 18, minHeight: 28, justifyContent: "center" },
-  status: { fontSize: 14, fontWeight: "600" },
-  button: {
-    marginTop: 18,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 10,
-    paddingVertical: 12,
+  center: {
+    flex: 1,
+    justifyContent: "center",
     alignItems: "center",
+    backgroundColor: colors.bg,
   },
-  buttonText: { color: colors.primary, fontSize: 15, fontWeight: "700" },
 });
