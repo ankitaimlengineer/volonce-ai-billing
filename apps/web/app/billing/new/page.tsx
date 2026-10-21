@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, authGet, authPost, clearTokens } from "@/lib/api";
+import WebcamCaptureModal from "@/app/components/WebcamCaptureModal";
 
 type Customer = { id: string; name: string; mobile: string | null };
 type Product = {
@@ -33,6 +34,11 @@ export default function NewBillPage() {
   const [pays, setPays] = useState<Pay[]>([{ method: "cash", amount: "" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // Webcam states
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
   // One key per bill: a double click sends the same key (no duplicate bill)
   const keyRef = useRef("");
 
@@ -47,22 +53,17 @@ export default function NewBillPage() {
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      try {
-        const c = await authGet<{ items: Customer[] }>("/api/v1/customers?page_size=100");
-        if (!cancelled) setCustomers(c.items);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 401) return onAuthError();
-        if (err instanceof ApiError && err.status === 403) return router.replace("/setup");
-        setError(err instanceof Error ? err.message : "Could not load customers");
-      }
-    }
-    load();
+    authGet<{ items: Customer[] }>("/api/v1/customers?page_size=100")
+      .then((res) => {
+        if (!cancelled) setCustomers(res.items);
+      })
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) onAuthError();
+      });
     return () => {
       cancelled = true;
     };
-  }, [onAuthError, router]);
+  }, [onAuthError]);
 
   // Product search (debounced)
   useEffect(() => {
@@ -106,52 +107,83 @@ export default function NewBillPage() {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
+  // Handle Photo Capture from Webcam
+  const handlePhotoCaptured = (_blob: Blob, dataUrl: string) => {
+    setCapturedImage(dataUrl);
+    // Note: In Phase 10, this blob will be sent to the AI OCR & Object Detection endpoint
+  };
+
   // Preview only. The server calculates the real total.
   const calc = useMemo(() => {
-    // 1) per-line numbers (no outside variables are changed)
-    const rows = lines.map((l) => {
-      const base = r2((Number(l.quantity) || 0) * Number(l.product.selling_price));
-      const discount = r2((base * (Number(l.discount) || 0)) / 100);
-      const tax = r2(((base - discount) * Number(l.product.tax_percent)) / 100);
-      return { base, discount, tax, total: base - discount + tax };
-    });
-    // 2) totals from the rows
-    const subtotal = rows.reduce((s, r) => s + r.base, 0);
-    const discount = rows.reduce((s, r) => s + r.discount, 0);
-    const tax = rows.reduce((s, r) => s + r.tax, 0);
-    return { rows, subtotal, discount, tax, total: r2(subtotal - discount + tax) };
+    let subtotal = 0;
+    let discount = 0;
+    let tax = 0;
+    for (const l of lines) {
+      const qty = Number(l.quantity) || 0;
+      const rate = Number(l.product.selling_price) || 0;
+      const discPct = Number(l.discount) || 0;
+      const taxPct = Number(l.product.tax_percent) || 0;
+
+      const base = rate * qty;
+      const disc = r2((base * discPct) / 100);
+      const taxable = base - disc;
+      const t = r2((taxable * taxPct) / 100);
+
+      subtotal += base;
+      discount += disc;
+      tax += t;
+    }
+    const total = r2(subtotal - discount + tax);
+    return { subtotal, discount, tax, total };
   }, [lines]);
 
-  const paid = pays.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const due = r2(calc.total - paid);
+  const paid = useMemo(() => {
+    return r2(pays.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+  }, [pays]);
+
+  const due = Math.max(0, r2(calc.total - paid));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
-    setError("");
-    if (lines.length === 0) return setError("Pehla product umero");
+
+    if (lines.length === 0) {
+      setError("At least 1 product add karo");
+      return;
+    }
+    if (!customerId && due > 0) {
+      setError("Walk-in customer ma udhar na chale. Poori payment nakho.");
+      return;
+    }
+
     setSaving(true);
+    setError("");
+
     try {
+      const payload = {
+        customer_id: customerId || null,
+        items: lines.map((l) => ({
+          product_id: l.product.id,
+          quantity: Number(l.quantity) || 1,
+          discount_percent: Number(l.discount) || 0,
+        })),
+        payments: pays
+          .filter((p) => Number(p.amount) > 0)
+          .map((p) => ({ method: p.method, amount: Number(p.amount) })),
+      };
+
       const inv = await authPost<Invoice>(
         "/api/v1/invoices",
-        {
-          customer_id: customerId || null,
-          items: lines.map((l) => ({
-            product_id: l.product.id,
-            quantity: l.quantity,
-            discount_percent: l.discount || "0",
-          })),
-          payments: pays
-            .filter((p) => Number(p.amount) > 0)
-            .map((p) => ({ method: p.method, amount: p.amount })),
-        },
+        payload,
         { "Idempotency-Key": keyRef.current }
       );
       router.push(`/invoices/${inv.id}`);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return onAuthError();
-      setError(err instanceof Error ? err.message : "Bill save thayu nathi");
-    } finally {
+      if (err instanceof ApiError && err.status === 401) {
+        onAuthError();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Bill banavva ma bhul thai");
       setSaving(false);
     }
   }
@@ -159,14 +191,55 @@ export default function NewBillPage() {
   return (
     <main className="min-h-screen bg-emerald-50 p-6">
       <form onSubmit={submit} className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-emerald-800">New Bill</h1>
-          <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
-            ← Dashboard
-          </Link>
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 pb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-emerald-800">New Bill</h1>
+            <p className="text-xs text-gray-500">ઝડપી બિલિંગ અને કમ્પ્યુટર સ્કેનર</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Webcam Scanner Button */}
+            <button
+              type="button"
+              onClick={() => setIsCameraOpen(true)}
+              className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700 transition"
+            >
+              📷 કેમેરા સ્કેનર (Webcam)
+            </button>
+
+            <Link href="/dashboard" className="text-sm font-medium text-gray-600 hover:underline">
+              ← Dashboard
+            </Link>
+          </div>
         </div>
 
         {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
+        {/* Captured Webcam Image Preview Banner */}
+        {capturedImage && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={capturedImage}
+                alt="Webcam captured"
+                className="h-16 w-20 rounded-lg object-cover shadow-sm border border-emerald-300"
+              />
+              <div>
+                <p className="text-sm font-bold text-emerald-900">✓ ફોટો સફળતાપૂર્વક કેપ્ચર થયો!</p>
+                <p className="text-xs text-emerald-700">Phase 10 AI મોડ્યુલ માટે તૈયાર છે</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCapturedImage(null)}
+              className="rounded-lg px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 transition"
+            >
+              હટાવો (Remove)
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -184,102 +257,108 @@ export default function NewBillPage() {
               ))}
             </select>
           </div>
+
           <div className="relative">
             <label className="text-sm font-medium text-gray-700">Product shodho</label>
             <input
+              type="text"
+              placeholder="Name, SKU athva barcode..."
               className={input}
-              placeholder="Naam, SKU ke barcode..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             {results.length > 0 && (
-              <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+              <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg">
                 {results.map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      onClick={() => addProduct(p)}
-                      className="flex w-full justify-between px-3 py-2 text-left text-sm text-gray-800 hover:bg-emerald-50"
-                    >
-                      <span>{p.name}</span>
-                      <span className="text-gray-500">₹{p.selling_price}</span>
-                    </button>
-                  </li>
+                  <button
+                    type="button"
+                    key={p.id}
+                    onClick={() => addProduct(p)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-emerald-50"
+                  >
+                    <span className="font-medium text-gray-800">{p.name}</span>
+                    <span className="text-xs text-gray-500">
+                      ₹{p.selling_price} | {p.unit}
+                    </span>
+                  </button>
                 ))}
-              </ul>
+              </div>
             )}
           </div>
         </div>
 
+        {/* Product Table */}
         <div className="mt-6 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-left text-sm">
             <thead>
-              <tr className="bg-emerald-700 text-left text-white">
-                <th className="p-2">Product</th>
-                <th className="p-2">Qty</th>
-                <th className="p-2 text-right">Rate</th>
-                <th className="p-2">Disc %</th>
-                <th className="p-2 text-right">Tax %</th>
-                <th className="p-2 text-right">Total</th>
-                <th className="p-2"></th>
+              <tr className="border-b border-gray-200 text-xs font-semibold uppercase text-gray-500">
+                <th className="py-2">Item</th>
+                <th className="py-2">Qty</th>
+                <th className="py-2">Rate</th>
+                <th className="py-2">Disc %</th>
+                <th className="py-2">Tax %</th>
+                <th className="py-2 text-right">Amount</th>
+                <th className="py-2"></th>
               </tr>
             </thead>
             <tbody>
-              {lines.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
-                    Upar thi product shodhi ne umero.
-                  </td>
-                </tr>
-              )}
-              {lines.map((l, i) => (
-                <tr
-                  key={l.product.id}
-                  className="border-b border-gray-200 align-middle text-gray-800"
-                >
-                  <td className="p-1 font-medium">{l.product.name}</td>
-                  <td className="p-1">
-                    <input
-                      required
-                      type="number"
-                      step="0.001"
-                      min="0.001"
-                      className={input + " w-24"}
-                      value={l.quantity}
-                      onChange={(e) => setLine(i, { quantity: e.target.value })}
-                    />
-                  </td>
-                  <td className="p-1 text-right">₹{l.product.selling_price}</td>
-                  <td className="p-1">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      className={input + " w-20"}
-                      value={l.discount}
-                      onChange={(e) => setLine(i, { discount: e.target.value })}
-                    />
-                  </td>
-                  <td className="p-1 text-right">{l.product.tax_percent}</td>
-                  <td className="p-1 text-right font-medium">
-                    ₹{r2(calc.rows[i].total).toFixed(2)}
-                  </td>
-                  <td className="p-1">
-                    <button
-                      type="button"
-                      onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}
-                      className="px-2 py-1 text-red-600"
-                    >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {lines.map((l, i) => {
+                const qty = Number(l.quantity) || 0;
+                const rate = Number(l.product.selling_price) || 0;
+                const discPct = Number(l.discount) || 0;
+                const taxPct = Number(l.product.tax_percent) || 0;
+                const base = rate * qty;
+                const disc = (base * discPct) / 100;
+                const taxable = base - disc;
+                const tax = (taxable * taxPct) / 100;
+                const amount = taxable + tax;
+
+                return (
+                  <tr key={l.product.id} className="border-b border-gray-100">
+                    <td className="py-2 font-medium text-gray-900">{l.product.name}</td>
+                    <td className="py-2">
+                      <input
+                        type="number"
+                        min="0.001"
+                        step="any"
+                        className="w-20 rounded border border-gray-300 px-2 py-1 text-sm"
+                        value={l.quantity}
+                        onChange={(e) => setLine(i, { quantity: e.target.value })}
+                      />
+                    </td>
+                    <td className="py-2 text-gray-600">₹{rate.toFixed(2)}</td>
+                    <td className="py-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        className="w-16 rounded border border-gray-300 px-2 py-1 text-sm"
+                        value={l.discount}
+                        onChange={(e) => setLine(i, { discount: e.target.value })}
+                      />
+                    </td>
+                    <td className="py-2 text-gray-600">{taxPct}%</td>
+                    <td className="py-2 text-right font-semibold text-gray-900">
+                      ₹{amount.toFixed(2)}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
+        {/* Payments & Totals */}
         <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
             <p className="text-sm font-medium text-gray-700">Payment</p>
@@ -359,6 +438,13 @@ export default function NewBillPage() {
           </button>
         </div>
       </form>
+
+      {/* Webcam Modal */}
+      <WebcamCaptureModal
+        isOpen={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onCapture={handlePhotoCaptured}
+      />
     </main>
   );
 }
