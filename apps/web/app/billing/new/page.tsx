@@ -107,10 +107,15 @@ export default function NewBillPage() {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  // Handle Photo Capture from Webcam
+  // Handle Photo Capture from Webcam -> Redirect to Phase 11 AI Review Screen
   const handlePhotoCaptured = (_blob: Blob, dataUrl: string) => {
     setCapturedImage(dataUrl);
-    // Note: In Phase 10, this blob will be sent to the AI OCR & Object Detection endpoint
+    try {
+      sessionStorage.setItem("volonce_scanned_img", dataUrl);
+      router.push("/billing/ai-review");
+    } catch {
+      router.push("/billing/ai-review");
+    }
   };
 
   // Preview only. The server calculates the real total.
