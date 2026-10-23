@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { authGet, authPost } from "@/lib/api";
+import { ApiError, authGet, authPost, clearTokens } from "@/lib/api";
 
 interface ScannedItem {
   raw_name: string;
@@ -23,6 +23,20 @@ interface Product {
   tax_percent: string;
 }
 
+interface ScanBillApiResponse {
+  invoice_number: string | null;
+  invoice_date: string | null;
+  items: ScannedItem[];
+  subtotal: number;
+  tax_total: number;
+  grand_total: number;
+  overall_confidence: number;
+  duplicate_info?: {
+    is_duplicate: boolean;
+    reason: string | null;
+  };
+}
+
 export default function AiReviewPage() {
   const router = useRouter();
 
@@ -37,6 +51,11 @@ export default function AiReviewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const handleAuthError = () => {
+    clearTokens();
+    router.replace("/login");
+  };
+
   useEffect(() => {
     let active = true;
 
@@ -45,8 +64,11 @@ export default function AiReviewPage() {
       try {
         const res = await authGet<{ items: Product[] }>("/api/v1/products?page_size=100");
         if (active) setAllProducts(res.items || []);
-      } catch (e) {
-        console.error("Products error", e);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          handleAuthError();
+          return;
+        }
       }
 
       // 2. Fetch image from session storage
@@ -63,18 +85,27 @@ export default function AiReviewPage() {
         const imgRes = await fetch(storedImg);
         const blob = await imgRes.blob();
 
-        const formData = new FormData();
-        formData.append("file", blob, "scan.jpg");
+        const form = new FormData();
+        form.append("file", blob, "scan.jpg");
 
         const token = localStorage.getItem("access_token");
         const apiRes = await fetch("http://localhost:8000/api/v1/ai/scan-bill", {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
+          body: form,
         });
 
-        if (!apiRes.ok) throw new Error("AI સ્કેન નિષ્ફળ ગયું");
-        const data = await apiRes.json();
+        if (apiRes.status === 401) {
+          handleAuthError();
+          return;
+        }
+
+        if (!apiRes.ok) {
+          const errData = await apiRes.json().catch(() => ({}));
+          console.error("Backend Error Details:", apiRes.status, errData);
+          throw new Error(errData.detail || `AI સ્કેન નિષ્ફળ ગયું (Status: ${apiRes.status})`);
+        }
+        const data = (await apiRes.json()) as ScanBillApiResponse;
 
         if (active) {
           setItems(data.items || []);
@@ -85,7 +116,7 @@ export default function AiReviewPage() {
           }
         }
       } catch (err) {
-        console.error("AI Scan failed, using local fallback:", err);
+        console.error("AI Scan error:", err);
       } finally {
         if (active) setLoadingAi(false);
       }
@@ -203,6 +234,10 @@ export default function AiReviewPage() {
       sessionStorage.removeItem("volonce_scanned_img");
       router.push(`/invoices/${res.id}`);
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleAuthError();
+        return;
+      }
       const e = err as { message?: string };
       setError(e.message || "બિલ બનાવવામાં સમસ્યા આવી");
       setSubmitting(false);

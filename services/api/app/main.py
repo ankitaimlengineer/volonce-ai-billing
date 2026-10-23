@@ -25,6 +25,7 @@ from app.modules.reports.summary import router as reports_router
 from app.modules.reports.sales import router as sales_report_router
 from app.modules.reports.cashflow import router as cashflow_router
 from app.modules.ai.router import router as ai_router
+from app.modules.whatsapp.router import router as whatsapp_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -57,6 +58,7 @@ app.include_router(reports_router)
 app.include_router(sales_report_router)
 app.include_router(cashflow_router)
 app.include_router(ai_router)
+app.include_router(whatsapp_router)
 
 
 @app.get("/api/v1/health")

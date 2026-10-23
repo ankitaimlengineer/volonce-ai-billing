@@ -1,12 +1,3 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-export type TokenResponse = {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  setup_completed: boolean;
-};
-
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -15,19 +6,52 @@ export class ApiError extends Error {
   }
 }
 
-// Turns an API error body into a readable message.
-// Import errors come as { message, errors: [...] } and are shown line by line.
+export type TokenResponse = {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  setup_completed: boolean;
+};
+
+export const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+).replace(/\/+$/, "");
+
 function extractMessage(data: unknown, fallback: string): string {
-  const detail = (data as { detail?: unknown } | null)?.detail;
+  if (!data || typeof data !== "object") return fallback;
+  const detail = (data as { detail?: unknown }).detail;
   if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return "Please check the entered details";
-  if (detail && typeof detail === "object") {
-    const d = detail as { message?: string; errors?: string[] };
-    if (Array.isArray(d.errors)) {
-      return [d.message, ...d.errors].filter(Boolean).join("\n");
-    }
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (typeof d === "string" ? d : d.msg ?? fallback)).join(", ");
   }
   return fallback;
+}
+
+// Auto-refresh token if 401/403 occurs
+let refreshing: Promise<boolean> | null = null;
+async function refreshAccessToken(): Promise<boolean> {
+  if (!refreshing) {
+    refreshing = (async () => {
+      const rt = localStorage.getItem("refresh_token");
+      if (!rt) return false;
+      try {
+        const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: rt }),
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as TokenResponse;
+        saveTokens(data);
+        return true;
+      } catch {
+        return false;
+      }
+    })().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
 }
 
 async function request<T>(
@@ -37,18 +61,30 @@ async function request<T>(
   auth = false,
   extraHeaders?: Record<string, string>
 ): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (auth) {
-    const token = localStorage.getItem("access_token");
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-  }
-  if (extraHeaders) Object.assign(headers, extraHeaders);
+  const makeCall = async (tokenOverride?: string | null) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (auth) {
+      const token = tokenOverride !== undefined ? tokenOverride : localStorage.getItem("access_token");
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+    }
+    if (extraHeaders) Object.assign(headers, extraHeaders);
 
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    return await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  };
+
+  let res = await makeCall();
+
+  // If unauthorized/forbidden, attempt refresh once
+  if ((res.status === 401 || res.status === 403) && auth) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      res = await makeCall(localStorage.getItem("access_token"));
+    }
+  }
 
   if (!res.ok) {
     let message = "Something went wrong";
@@ -57,8 +93,13 @@ async function request<T>(
     } catch {}
     throw new ApiError(message, res.status);
   }
+
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+export function apiGet<T>(path: string): Promise<T> {
+  return request<T>("GET", path);
 }
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
@@ -69,10 +110,6 @@ export function authGet<T>(path: string): Promise<T> {
   return request<T>("GET", path, undefined, true);
 }
 
-export function authPut<T>(path: string, body: unknown): Promise<T> {
-  return request<T>("PUT", path, body, true);
-}
-
 export function authPost<T>(
   path: string,
   body?: unknown,
@@ -81,19 +118,29 @@ export function authPost<T>(
   return request<T>("POST", path, body, true, extraHeaders);
 }
 
-export async function authDelete(path: string): Promise<void> {
-  await request<void>("DELETE", path, undefined, true);
+export function authPut<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>("PUT", path, body, true);
 }
 
-async function uploadFile(path: string, file: File): Promise<Response> {
+export function authPatch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>("PATCH", path, body, true);
+}
+
+export function authDelete(path: string): Promise<void> {
+  return request<void>("DELETE", path, undefined, true);
+}
+
+export async function authUpload<T>(path: string, file: Blob | File): Promise<T> {
   const token = localStorage.getItem("access_token");
   const form = new FormData();
   form.append("file", file);
+
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
   });
+
   if (!res.ok) {
     let message = "Upload failed";
     try {
@@ -101,20 +148,10 @@ async function uploadFile(path: string, file: File): Promise<Response> {
     } catch {}
     throw new ApiError(message, res.status);
   }
-  return res;
-}
 
-export async function authUpload(path: string, file: File): Promise<void> {
-  await uploadFile(path, file);
-}
-
-// Same as authUpload, but returns the JSON result (used by CSV import)
-export async function authUploadJson<T>(path: string, file: File): Promise<T> {
-  const res = await uploadFile(path, file);
   return res.json() as Promise<T>;
 }
 
-// Downloads a file (e.g. CSV) using the token, then saves it
 export async function authDownload(path: string, filename: string): Promise<void> {
   const token = localStorage.getItem("access_token");
   const res = await fetch(`${API_URL}${path}`, {
@@ -125,11 +162,12 @@ export async function authDownload(path: string, filename: string): Promise<void
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   URL.revokeObjectURL(url);
 }
 
-// Images are private, so we fetch them with the token and show them as a blob URL
 export async function authBlobUrl(path: string): Promise<string | null> {
   const token = localStorage.getItem("access_token");
   const res = await fetch(`${API_URL}${path}`, {
@@ -139,8 +177,6 @@ export async function authBlobUrl(path: string): Promise<string | null> {
   return URL.createObjectURL(await res.blob());
 }
 
-// TEMPORARY: localStorage is only for development.
-// We will move tokens to httpOnly cookies in a later step.
 export function saveTokens(t: TokenResponse) {
   localStorage.setItem("access_token", t.access_token);
   localStorage.setItem("refresh_token", t.refresh_token);
