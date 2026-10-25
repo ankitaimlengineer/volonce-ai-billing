@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ApiError, authBlobUrl, authGet, clearTokens } from "@/lib/api";
 
-// Strict TypeScript Interfaces for html2canvas-pro & jsPDF (0 ESLint Errors)
+// Strict TypeScript Interfaces for Canvas & jsPDF (0 ESLint Errors)
 interface CanvasProOptions {
   scale?: number;
   useCORS?: boolean;
@@ -108,7 +108,7 @@ function numberToWordsINR(num: number): string {
   return result + " Only";
 }
 
-// Helper to dynamically load external scripts safely
+// Safe Script Loader
 function loadScript(src: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (document.querySelector(`script[src="${src}"]`)) {
@@ -179,51 +179,85 @@ function InvoiceView() {
     };
   }, [id, onAuthError]);
 
+  // ૧-ક્લિક ડાયરેક્ટ WhatsApp (કોઈ પોપઅપ બોક્સ નહીં, સીધું WhatsApp ખુલશે!)
   const sendWhatsApp = () => {
     if (!inv || !biz) return;
-    const phone = cust?.mobile || "";
-    const msg = `નમસ્તે! *${s(biz.profile.name)}* તરફથી તમારું ડિજિટલ બિલ:\n\n*બિલ નં:* ${inv.invoice_number}\n*તારીખ:* ${inv.invoice_date}\n*કુલ રકમ:* ₹${Number(inv.grand_total).toFixed(2)}\n*ચૂકવેલ:* ₹${Number(inv.paid_amount).toFixed(2)}\n\nઆભાર! ફરી પધારજો.`;
-    window.open(`https://wa.me/${phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(msg)}`, "_blank");
+
+    // આઈટમ્સનું સુંદર લિસ્ટ
+    const itemsList = inv.items
+      .map((it) => `• *${it.product_name}* (જથ્થો: ${Number(it.quantity)}) = ₹${Number(it.line_total).toFixed(2)}`)
+      .join("\n");
+
+    const grandTotalVal = Number(inv.grand_total) || 0;
+    const paidVal = Number(inv.paid_amount) || 0;
+    const dueVal = Math.max(0, grandTotalVal - paidVal);
+
+    const msg = 
+`🧾 *ટેક્સ ઇન્વોઇસ - ${s(biz.profile.name).toUpperCase()}*
+━━━━━━━━━━━━━━━━━━━━
+👤 *ગ્રાહક:* ${cust ? cust.name : "Walk-in Customer"}
+📄 *બિલ નં:* ${inv.invoice_number}
+📅 *તારીખ:* ${inv.invoice_date}
+
+🛍️ *ખરીદેલી વસ્તુઓની વિગત:*
+${itemsList}
+━━━━━━━━━━━━━━━━━━━━
+💵 *સબટોટલ:* ₹${Number(inv.subtotal).toFixed(2)}
+📊 *GST ટેક્સ:* ₹${Number(inv.tax_total).toFixed(2)}
+💰 *કુલ રકમ:* *₹${grandTotalVal.toFixed(2)}*
+✅ *પેમેન્ટ સ્ટેટસ:* ${dueVal <= 0 ? "ચૂકતે (PAID)" : `બાકી: ₹${dueVal.toFixed(2)}`}
+
+🙏 *મુલાકાત બદલ ખૂબ ખૂબ આભાર! ફરી પધારશો.*`;
+
+    const encodedMsg = encodeURIComponent(msg);
+
+    // જો કસ્ટમરનો નંબર સેવ હોય તો સીધી એની ચેટ, નહિતર ડાયરેક્ટ WhatsApp એપ/વેબ ખુલશે
+    const rawPhone = cust?.mobile ? cust.mobile.replace(/[^0-9]/g, "") : "";
+    const formattedPhone = rawPhone.length === 10 ? "91" + rawPhone : rawPhone;
+
+    const whatsappUrl = formattedPhone
+      ? `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodedMsg}`
+      : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+
+    window.open(whatsappUrl, "_blank");
   };
 
-  // Direct High-Definition PDF Downloader with Tailwind v4 LAB/OKLCH Support
+  // Direct High-Definition PDF Downloader (Tailwind v4 compatible, No 'lab' color error)
   const downloadDirectPDF = async () => {
     if (!inv) return;
     setIsDownloadingPdf(true);
 
     try {
-      // Load html2canvas-pro (Tailwind 4 Lab/Oklch compatible) and jsPDF
       await Promise.all([
         loadScript("https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js"),
         loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"),
       ]);
 
       const element = document.getElementById("invoice-bill-card");
-      if (!element || !window.html2canvas) {
-        throw new Error("Element or html2canvas not found");
+      if (element && window.html2canvas) {
+        const canvas = await window.html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: "#ffffff",
+        });
+
+        const imgData = canvas.toDataURL("image/jpeg", 0.98);
+        const JsPDFClass = window.jspdf?.jsPDF || window.jsPDF;
+        if (JsPDFClass) {
+          const pdf = new JsPDFClass("p", "mm", "a4");
+          const pageWidth = pdf.internal.pageSize.getWidth();
+          const pageHeight = pdf.internal.pageSize.getHeight();
+          const imgWidth = pageWidth - 14;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          pdf.addImage(imgData, "JPEG", 7, 7, imgWidth, Math.min(imgHeight, pageHeight - 14));
+          pdf.save(`Invoice-${inv.invoice_number}.pdf`);
+          return;
+        }
       }
-
-      const canvas = await window.html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#ffffff",
-      });
-
-      const imgData = canvas.toDataURL("image/jpeg", 0.98);
-      const JsPDFClass = window.jspdf?.jsPDF || window.jsPDF;
-      if (!JsPDFClass) throw new Error("jsPDF not available");
-
-      const pdf = new JsPDFClass("p", "mm", "a4");
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth - 14; // 7mm margins
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      pdf.addImage(imgData, "JPEG", 7, 7, imgWidth, Math.min(imgHeight, pageHeight - 14));
-      pdf.save(`Invoice-${inv.invoice_number}.pdf`);
+      window.print();
     } catch (err) {
-      console.error("PDF Download fallback triggered:", err);
+      console.error("PDF Download error:", err);
       window.print();
     } finally {
       setIsDownloadingPdf(false);

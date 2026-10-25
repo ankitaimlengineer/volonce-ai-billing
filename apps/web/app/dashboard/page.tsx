@@ -53,20 +53,20 @@ function rangeFor(p: Preset): Range {
 }
 
 const PRESETS: [Preset, string][] = [
-  ["today", "Today"],
-  ["yesterday", "Yesterday"],
-  ["week", "This Week"],
-  ["month", "This Month"],
-  ["year", "This Year"],
-  ["custom", "Custom"],
+  ["today", "Today (આજે)"],
+  ["yesterday", "Yesterday (ગઈકાલે)"],
+  ["week", "This Week (આ અઠવાડિયે)"],
+  ["month", "This Month (આ મહિને)"],
+  ["year", "This Year (આ વર્ષે)"],
+  ["custom", "Custom (તારીખ પસંદ કરો)"],
 ];
 
 function Card({ title, value, tone, sub }: { title: string; value: string; tone?: string; sub?: string }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
-      <p className="text-sm text-gray-500">{title}</p>
-      <p className={`mt-1 text-2xl font-bold ${tone ?? "text-gray-900"}`}>{value}</p>
-      {sub && <p className="text-xs text-gray-400">{sub}</p>}
+    <div className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold text-gray-500">{title}</p>
+      <p className={`mt-1 text-2xl font-black font-mono ${tone ?? "text-gray-900"}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -105,7 +105,6 @@ export default function DashboardPage() {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) return onAuthError();
         if (err instanceof ApiError && err.status === 403) {
-          // setup not complete, or role cannot see reports
           setError(err.message);
           return;
         }
@@ -128,27 +127,43 @@ export default function DashboardPage() {
   }
 
   const nav =
-    "rounded-lg border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50";
+    "rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 transition";
   const tab = (a: boolean) =>
-    `rounded-lg px-3 py-1.5 text-sm font-medium ${
-      a ? "bg-emerald-700 text-white" : "border border-gray-300 text-gray-700"
+    `rounded-lg px-3 py-1.5 text-xs md:text-sm font-bold transition ${
+      a ? "bg-emerald-800 text-white shadow" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
     }`;
-  const profitTone = (v: string) => (Number(v) < 0 ? "text-red-700" : "text-emerald-800");
+  const profitTone = (v: string) => (Number(v) < 0 ? "text-red-600" : "text-emerald-800");
 
   return (
-    <main className="min-h-screen bg-emerald-50 p-6">
+    <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold text-emerald-800">Dashboard</h1>
-          <Link
-            href="/billing/new"
-            className="rounded-lg bg-emerald-700 px-6 py-3 text-lg font-semibold text-white hover:bg-emerald-800"
-          >
-            + New Bill
-          </Link>
+        {/* Top Header with AI Counter & New Bill Buttons */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200/80 pb-4">
+          <div>
+            <h1 className="text-2xl font-black text-emerald-950">Dashboard (ડેશબોર્ડ)</h1>
+            <p className="text-xs text-gray-500 mt-0.5">VOLONCE AI BILLING • દુકાનનો દૈનિક હિસાબ</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* નવું સ્માર્ટ AI કાઉન્ટર બટન */}
+            <Link
+              href="/billing/ai-counter"
+              className="flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2.5 text-sm font-black text-white shadow-lg hover:bg-emerald-900 transition"
+            >
+              ⚡ સ્માર્ટ AI કાઉન્ટર (Smart POS)
+            </Link>
+
+            <Link
+              href="/billing/new"
+              className="rounded-xl border-2 border-emerald-700 bg-white px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-50 shadow-sm transition"
+            >
+              + સાદું બિલ (New Bill)
+            </Link>
+          </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        {/* Date Filter Tabs */}
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           {PRESETS.map(([k, l]) => (
             <button key={k} className={tab(preset === k)} onClick={() => choose(k)}>
               {l}
@@ -157,66 +172,69 @@ export default function DashboardPage() {
         </div>
 
         {preset === "custom" && (
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <label className="text-sm text-gray-700">
-              From
+          <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 border border-emerald-100 shadow-sm">
+            <label className="text-xs font-bold text-gray-700">
+              ક્યારથી (From)
               <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-gray-900" />
+                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900" />
             </label>
-            <label className="text-sm text-gray-700">
-              To
+            <label className="text-xs font-bold text-gray-700">
+              ક્યાં સુધી (To)
               <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-gray-900" />
+                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900" />
             </label>
             <button onClick={applyCustom}
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white">
-              Show
+              className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-800">
+              બતાવો (Show)
             </button>
           </div>
         )}
 
-        {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700 border border-red-200">{error}</p>}
 
         {data && (
           <>
-            <p className="mt-4 text-xs text-gray-500">
-              {data.date_from === data.date_to
-                ? data.date_from
-                : `${data.date_from} thi ${data.date_to}`}
+            <p className="mt-4 text-xs font-semibold text-gray-500">
+              સમયગાળો: {data.date_from === data.date_to ? data.date_from : `${data.date_from} થી ${data.date_to}`}
             </p>
 
+            {/* Overview Metrics Cards */}
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Card title="Total Sales" value={money(data.sales)} tone="text-emerald-800" />
-              <Card title="Bills" value={String(data.bills)} />
-              <Card title="Collections" value={money(data.collections)} />
-              <Card title="Purchases" value={money(data.purchases)} />
-              <Card title="Gross Profit" value={money(data.gross_profit)}
-                tone={profitTone(data.gross_profit)} sub={`Margin ${data.margin_percent}%`} />
-              <Card title="Expenses" value={money(data.expenses)} tone="text-amber-700" />
-              <Card title="Net Profit" value={money(data.net_profit)} tone={profitTone(data.net_profit)} />
-              <Card title="Cost of goods" value={money(data.cogs)} />
+              <Card title="આજનું વેચાણ (Sales)" value={money(data.sales)} tone="text-emerald-800" sub={`${data.bills} બિલો બન્યા`} />
+              <Card title="કુલ બિલો (Bills)" value={String(data.bills)} />
+              <Card title="રોકડ વસૂલાત (Collections)" value={money(data.collections)} tone="text-emerald-700" />
+              <Card title="માલની ખરીદી (Purchases)" value={money(data.purchases)} />
+              <Card title="કુલ નફો (Gross Profit)" value={money(data.gross_profit)}
+                tone={profitTone(data.gross_profit)} sub={`માર્જિન: ${data.margin_percent}%`} />
+              <Card title="દુકાનના ખર્ચા (Expenses)" value={money(data.expenses)} tone="text-amber-700" />
+              <Card title="ચોખ્ખો નફો (Net Profit)" value={money(data.net_profit)} tone={profitTone(data.net_profit)} />
+              <Card title="માલની પડતર (COGS)" value={money(data.cogs)} />
             </div>
 
-            <h2 className="mt-6 text-sm font-semibold text-gray-600">Aaj sudhi nu (period ni asar nahi)</h2>
+            {/* Outstanding & Inventory Stock Status */}
+            <h2 className="mt-7 text-xs font-extrabold uppercase tracking-wider text-gray-500">
+              હાલની સ્થિતિ (Current Live Status)
+            </h2>
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Card title="Levana (Receivable)" value={money(data.receivable)} tone="text-emerald-800" />
-              <Card title="Aapva (Payable)" value={money(data.payable)} tone="text-amber-700" />
-              <Card title="Stock Value" value={money(data.stock_value)} />
-              <Card title="Low / Out of stock" value={`${data.low_stock} / ${data.out_of_stock}`}
-                tone={data.out_of_stock > 0 ? "text-red-700" : "text-gray-900"} />
+              <Card title="ગ્રાહકો પાસેથી લેવાના (Receivable / ઉધારી)" value={money(data.receivable)} tone="text-emerald-800" sub="કુલ ઉધાર રકમ" />
+              <Card title="વેપારીઓને આપવાના (Payable)" value={money(data.payable)} tone="text-amber-800" sub="બાકી ચૂકવણી" />
+              <Card title="દુકાનમાં સ્ટોક કિંમત (Stock Value)" value={money(data.stock_value)} tone="text-slate-900" />
+              <Card title="ઓછો / ખલાસ સ્ટોક (Stock Alert)" value={`${data.low_stock} / ${data.out_of_stock}`}
+                tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"} sub="ધ્યાન આપવાની જરૂર" />
             </div>
           </>
         )}
 
-        <div className="mt-8 flex flex-wrap gap-2">
-          <Link href="/invoices" className={nav}>Invoices</Link>
-          <Link href="/products" className={nav}>Products</Link>
-          <Link href="/stock" className={nav}>Stock</Link>
-          <Link href="/customers" className={nav}>Customers</Link>
-          <Link href="/suppliers" className={nav}>Suppliers</Link>
-          <Link href="/purchases" className={nav}>Purchases</Link>
-          <Link href="/expenses" className={nav}>Expenses</Link>
-          <Link href="/reports" className={nav}>Reports</Link>
+        {/* Quick Module Navigation Links */}
+        <div className="mt-8 flex flex-wrap gap-2.5 border-t border-emerald-200/60 pt-6">
+          <Link href="/invoices" className={nav}>બિલો (Invoices)</Link>
+          <Link href="/products" className={nav}>પ્રોડક્ટ્સ (Products)</Link>
+          <Link href="/stock" className={nav}>સ્ટોક (Stock)</Link>
+          <Link href="/customers" className={nav}>ગ્રાહકો (Customers)</Link>
+          <Link href="/suppliers" className={nav}>વેપારીઓ (Suppliers)</Link>
+          <Link href="/purchases" className={nav}>ખરીદી (Purchases)</Link>
+          <Link href="/expenses" className={nav}>ખર્ચા (Expenses)</Link>
+          <Link href="/reports" className={nav}>રિપોર્ટ્સ (Reports)</Link>
         </div>
       </div>
     </main>

@@ -1,60 +1,87 @@
-import os
-import urllib.parse
+import logging
 import httpx
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv()
+logger = logging.getLogger("uvicorn.error")
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "").strip()
+class WhatsAppCloudClient:
+    def __init__(self):
+        self.token = settings.whatsapp_api_token
+        self.phone_number_id = settings.whatsapp_phone_number_id
+        self.base_url = f"https://graph.facebook.com/v21.0/{self.phone_number_id}"
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.token and self.phone_number_id)
 
-def format_phone_number(phone: str) -> str:
-    """Ensures phone has country code (defaults to India +91 if 10 digits)."""
-    clean = "".join(filter(str.isdigit, phone))
-    if len(clean) == 10:
-        return f"91{clean}"
-    return clean
+    def clean_phone_number(self, phone: str) -> str:
+        """Formats phone number into E.164 without '+' (e.g. 919876543210)."""
+        digits = "".join(filter(str.isdigit, phone))
+        if len(digits) == 10:
+            return "91" + digits
+        if digits.startswith("0") and len(digits) == 11:
+            return "91" + digits[1:]
+        return digits
 
+    async def upload_pdf_media(self, pdf_bytes: bytes, filename: str) -> str | None:
+        """Uploads document bytes to Meta WhatsApp Cloud Media Storage."""
+        if not self.is_configured:
+            return None
 
-def generate_whatsapp_intent_link(phone: str, message: str) -> str:
-    """Generates direct WhatsApp Web / App link for zero-setup messaging."""
-    formatted_phone = format_phone_number(phone)
-    encoded_msg = urllib.parse.quote(message)
-    return f"https://api.whatsapp.com/send?phone={formatted_phone}&text={encoded_msg}"
+        url = f"{self.base_url}/media"
+        headers = {"Authorization": f"Bearer {self.token}"}
+        files = {
+            "file": (filename, pdf_bytes, "application/pdf"),
+            "messaging_product": (None, "whatsapp"),
+            "type": (None, "application/pdf"),
+        }
 
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            try:
+                res = await client.post(url, headers=headers, files=files)
+                if res.status_code in (200, 201):
+                    return res.json().get("id")
+                logger.error("Meta Media Upload Error: %s", res.text)
+                return None
+            except Exception as e:
+                logger.error("WhatsApp Media Upload Exception: %s", e)
+                return None
 
-async def send_meta_cloud_message(phone: str, message: str) -> dict:
-    """
-    Sends message using Meta Official WhatsApp Cloud API
-    Requires WHATSAPP_TOKEN and WHATSAPP_PHONE_ID in environment.
-    """
-    if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
-        return {"sent": False, "reason": "Cloud API credentials not configured"}
+    async def send_invoice_document(
+        self,
+        recipient_phone: str,
+        media_id: str,
+        filename: str,
+        caption: str,
+    ) -> dict:
+        """Sends document via Meta WhatsApp Cloud API."""
+        url = f"{self.base_url}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self.clean_phone_number(recipient_phone),
+            "type": "document",
+            "document": {
+                "id": media_id,
+                "caption": caption,
+                "filename": filename,
+            },
+        }
 
-    formatted_phone = format_phone_number(phone)
-    url = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_ID}/messages"
-
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": formatted_phone,
-        "type": "text",
-        "text": {"body": message},
-    }
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            res = await client.post(url, headers=headers, json=payload)
-            if res.status_code == 200:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                res = await client.post(url, headers=headers, json=payload)
                 data = res.json()
-                msg_id = data.get("messages", [{}])[0].get("id")
-                return {"sent": True, "message_id": msg_id}
-            else:
-                return {"sent": False, "reason": res.text}
-        except Exception as e:
-            return {"sent": False, "reason": str(e)}
+                if res.status_code in (200, 201):
+                    return {"success": True, "data": data}
+                logger.error("WhatsApp Send Document Error: %s", res.text)
+                return {"success": False, "error": data.get("error", {}).get("message", res.text)}
+            except Exception as e:
+                logger.error("WhatsApp Send Exception: %s", e)
+                return {"success": False, "error": str(e)}
+
+whatsapp_client = WhatsAppCloudClient()

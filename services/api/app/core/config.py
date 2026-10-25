@@ -1,10 +1,7 @@
 from pathlib import Path
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# services/api/app/core/config.py -> project root is 4 levels up
 ROOT_DIR = Path(__file__).resolve().parents[4]
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,8 +19,13 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    access_token_minutes: int = 15
+    access_token_minutes: int = 60
     refresh_token_days: int = 30
+
+    # Phase 12: Meta WhatsApp Cloud API credentials
+    whatsapp_api_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_waba_id: str = ""
 
     @property
     def database_url(self) -> str:
@@ -31,6 +33,5 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
-
 
 settings = Settings()

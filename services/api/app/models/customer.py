@@ -51,6 +51,10 @@ class Customer(UUIDMixin, TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # ગ્રાહકનો ફોટો Customer ક્લાસમાં હોવો જોઈએ (અહીં બરાબર સેટ કર્યો છે)
+    photo_key: Mapped[str | None] = mapped_column(String(300))
+    photo_content_type: Mapped[str | None] = mapped_column(String(50))
+
 
 class CustomerLedger(UUIDMixin, Base):
     """Append-only. Receivable = opening + SUM(debit) - SUM(credit).
