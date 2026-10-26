@@ -14,6 +14,7 @@ from app.models.supplier_ledger import SupplierLedger
 from app.models.user import User
 from app.models.sales_return import SalesReturn, SalesReturnItem
 from app.models.expense import Expense
+from app.models.subscription import OrganizationSubscription, SubscriptionPlan
 
 __all__ = [
     "BusinessSettings",
@@ -39,4 +40,6 @@ __all__ = [
     "SalesReturn",
     "SalesReturnItem",
     "Expense",
+    "OrganizationSubscription",
+    "SubscriptionPlan",
 ]

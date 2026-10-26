@@ -8,7 +8,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, require_roles, require_setup_completed
+from app.core.deps import (
+    get_db,
+    require_active_subscription,
+    require_roles,
+    require_setup_completed,
+)
 from app.models import (
     BusinessSettings,
     Customer,
@@ -95,6 +100,7 @@ def create_invoice(
     data: InvoiceCreate,
     idempotency_key: str = Header(min_length=8, max_length=100, alias="Idempotency-Key"),
     user: User = Depends(_write_user),
+    _sub: User = Depends(require_active_subscription),  # લિમિટ ગાર્ડ: પ્લાન ન હોય તો બિલિંગ બ્લોક થશે!
     db: Session = Depends(get_db),
 ):
     org_id = _org_id(user)
@@ -301,7 +307,7 @@ def create_invoice(
                 )
         db.commit()
     except IntegrityError:
-        db.rollback()  # nothing is saved (counter number is rolled back too)
+        db.rollback()
         winner = _find_by_key(db, org_id, idempotency_key)
         if winner:
             return _to_out(db, winner)

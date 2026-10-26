@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -57,4 +58,30 @@ def require_setup_completed(
     org = db.get(Organization, user.organization_id) if user.organization_id else None
     if org is None or not org.setup_completed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Business setup not completed")
+    return user
+
+
+def require_active_subscription(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Blocks billing APIs if the 5-day free trial or paid subscription has expired."""
+    # Super admin can always test and generate bills without restrictions
+    if user.role == "super_admin":
+        return user
+
+    if not user.organization_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No business linked to this user")
+
+    # Dynamic import to avoid circular dependency
+    from app.modules.subscription.router import get_or_create_org_subscription
+
+    sub = get_or_create_org_subscription(db, user.organization_id)
+    now = datetime.now(timezone.utc)
+
+    if sub.status != "active" or sub.expires_at <= now:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="તમારો ૫-દિવસનો ફ્રી ટ્રાયલ અથવા સબસ્ક્રિપ્શન સમાપ્ત થઈ ગયું છે. નવું બિલ બનાવવા માટે કૃપા કરીને સબસ્ક્રિપ્શન પ્લાન ખરીદો.",
+        )
     return user

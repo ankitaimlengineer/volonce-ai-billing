@@ -39,6 +39,8 @@ interface CustomerOption {
   outstanding: string;
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 export default function QuickAiCounterPage() {
   const router = useRouter();
 
@@ -135,7 +137,7 @@ export default function QuickAiCounterPage() {
       formData.append("file", blob, "counter_scan.jpg");
 
       const token = localStorage.getItem("access_token");
-      const res = await fetch("http://localhost:8000/api/v1/ai/scan-bill", {
+      const res = await fetch(`${API_BASE}/api/v1/ai/scan-bill`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
@@ -162,7 +164,7 @@ export default function QuickAiCounterPage() {
       formData.append("file", blob, "face_scan.jpg");
 
       const token = localStorage.getItem("access_token");
-      const res = await fetch("http://localhost:8000/api/v1/ai/match-customer-face", {
+      const res = await fetch(`${API_BASE}/api/v1/ai/match-customer-face`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
@@ -204,7 +206,7 @@ export default function QuickAiCounterPage() {
         const formData = new FormData();
         formData.append("file", customerBlobForNew, "face.jpg");
         const token = localStorage.getItem("access_token");
-        await fetch(`http://localhost:8000/api/v1/ai/register-customer-face/${newCust.id}`, {
+        await fetch(`${API_BASE}/api/v1/ai/register-customer-face/${newCust.id}`, {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
@@ -221,7 +223,7 @@ export default function QuickAiCounterPage() {
       setSelectedCustomerId(newCust.id);
       setIsNewCustomer(false);
       alert(`✓ ${newCust.name} નું ખાતું અને ચહેરો ભવિષ્ય માટે સેવ થઈ ગયા છે!`);
-    } catch (e) {
+    } catch {
       alert("ગ્રાહક સેવ કરવામાં સમસ્યા આવી");
     }
   };
@@ -231,7 +233,7 @@ export default function QuickAiCounterPage() {
     return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
   }, [items]);
 
-  // One-Click Fast Bill Creation
+  // One-Click Fast Bill Creation with Subscription Expiry Protection
   const handleFastCheckout = async () => {
     if (items.length === 0) {
       setError("કાઉન્ટર પરથી ઓછામાં ઓછી ૧ પ્રોડક્ટ સ્કેન કરો.");
@@ -266,7 +268,13 @@ export default function QuickAiCounterPage() {
 
       router.push(`/invoices/${res.id}`);
     } catch (err: unknown) {
-      const e = err as { message?: string };
+      const e = err as { message?: string; status?: number };
+      // Phase 13 Subscription Expiry Lock Check
+      if (e.status === 402 || e.message?.includes("સબસ્ક્રિપ્શન") || e.message?.includes("ટ્રાયલ")) {
+        alert("⚠️ તમારો ૫-દિવસનો ફ્રી ટ્રાયલ સમાપ્ત થઈ ગયો છે! નવું બિલ બનાવવા માટે સબસ્ક્રિપ્શન પ્લાન ખરીદો.");
+        router.push("/subscription");
+        return;
+      }
       setError(e.message || "બિલ બનાવવામાં સમસ્યા આવી");
       setSubmitting(false);
     }
