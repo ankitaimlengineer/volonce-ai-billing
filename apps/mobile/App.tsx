@@ -9,8 +9,9 @@ import LoginScreen from "./src/screens/LoginScreen";
 import HomeScreen from "./src/screens/HomeScreen";
 import ProductsScreen from "./src/screens/ProductsScreen";
 import BillingScreen from "./src/screens/BillingScreen";
+import AiCameraBillingScreen from "./src/screens/AiCameraBillingScreen";
 
-export type ScreenType = "home" | "products" | "billing";
+export type ScreenType = "home" | "products" | "billing" | "ai_camera";
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -78,6 +79,7 @@ export default function App() {
           navigation={{
             navigate: (screen: string) => {
               if (screen === "Billing") setCurrentScreen("billing");
+              if (screen === "AiCamera") setCurrentScreen("ai_camera");
               if (screen === "Products") setCurrentScreen("products");
             },
           }}
@@ -88,6 +90,9 @@ export default function App() {
       )}
       {currentScreen === "billing" && (
         <BillingScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "ai_camera" && (
+        <AiCameraBillingScreen onBack={() => setCurrentScreen("home")} />
       )}
     </SafeAreaProvider>
   );

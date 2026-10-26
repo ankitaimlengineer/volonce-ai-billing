@@ -4,10 +4,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from app.models import Invoice, BusinessSettings, Organization, Customer
+from app.models import Invoice, InvoiceItem, BusinessSettings, Organization, Customer
 
 def generate_invoice_pdf_bytes(
     invoice: Invoice,
+    items: list[InvoiceItem],
     org: Organization,
     settings: BusinessSettings | None,
     customer: Customer | None,
@@ -44,25 +45,20 @@ def generate_invoice_pdf_bytes(
         fontName="Helvetica",
         textColor=colors.HexColor("#D1FAE5"),
     )
-    normal_bold = ParagraphStyle(
-        "NormalBold",
-        parent=styles["Normal"],
-        fontSize=9,
-        fontName="Helvetica-Bold",
-        textColor=dark_text,
-    )
+
+    org_name = org.name.upper() if org and org.name else "STORE"
+    org_address = f"{org.address or ''}, {org.city or ''}" if org else ""
+    org_mobile = f"+91 {org.mobile}" if org and org.mobile else ""
+    org_gst = f"GSTIN: {org.gst_number}" if org and org.gst_number else ""
 
     # 1. Top Header Banner
     header_data = [
         [
-            Paragraph(f"<b>{org.name.upper()}</b>", title_style),
+            Paragraph(f"<b>{org_name}</b>", title_style),
             Paragraph("<b>TAX INVOICE</b>", ParagraphStyle("RightTax", parent=title_style, alignment=2, fontSize=14)),
         ],
         [
-            Paragraph(
-                f"{org.address or ''}, {org.city or ''}<br/>Phone: +91 {org.mobile or ''} | GSTIN: {org.gst_number or 'N/A'}",
-                body_white,
-            ),
+            Paragraph(f"{org_address}<br/>Phone: {org_mobile} | {org_gst}", body_white),
             Paragraph(
                 f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Date:</b> {invoice.invoice_date}",
                 ParagraphStyle("RightInv", parent=body_white, alignment=2),
@@ -119,7 +115,7 @@ def generate_invoice_pdf_bytes(
         ]
     ]
 
-    for idx, it in enumerate(invoice.items, start=1):
+    for idx, it in enumerate(items, start=1):
         table_rows.append([
             str(idx),
             it.product_name,

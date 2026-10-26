@@ -68,7 +68,6 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
     });
   };
 
-  // Exact Backend Math: base + (base * tax_percent / 100)
   const calculateTotals = () => {
     let subtotal = 0;
     let taxTotal = 0;
@@ -81,7 +80,7 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
         const taxRate = Number(p.tax_percent) || 0;
 
         const base = rate * qty;
-        const tax = Math.round((base * taxRate) / 100 * 100) / 100;
+        const tax = Math.round(((base * taxRate) / 100) * 100) / 100;
 
         subtotal += base;
         taxTotal += tax;
@@ -112,7 +111,6 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
         discount_percent: 0,
       }));
 
-      // Exact match with Backend grand_total
       const payments = [
         {
           method: paymentMethod,
@@ -126,21 +124,57 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
         payments,
       };
 
-      await createInvoice(payload);
+      const invoiceRes = await createInvoice(payload);
 
-      // Core Philosophy: Payment -> Confirm -> Invoice -> WhatsApp
+      const invNumber = invoiceRes?.invoice_number || `INV-${Date.now().toString().slice(-6)}`;
+      const invDate = invoiceRes?.invoice_date || new Date().toISOString().slice(0, 10);
+      const subtotalVal = Number(invoiceRes?.subtotal || totals.subtotal).toFixed(2);
+      const taxTotalVal = Number(invoiceRes?.tax_total || totals.taxTotal).toFixed(2);
+      const grandTotalVal = Number(invoiceRes?.grand_total || totals.grandTotal).toFixed(2);
+
+      // આઇટમ્સ લિસ્ટ
+      const itemsList = Object.keys(cart)
+        .map((id) => {
+          const p = products.find((x) => x.id === id);
+          const qty = cart[id];
+          const rate = Number(p?.selling_price) || 0;
+          return `• *${p?.name}* (જથ્થો: ${qty}) = ₹${(rate * qty).toFixed(2)}`;
+        })
+        .join("\n");
+
+      // વેબ જેવો જ સંપૂર્ણ મેસેજ
+      const professionalMsg = 
+`🧾 *ટેક્સ ઇન્વોઇસ - VOLONCE AI STORE*
+━━━━━━━━━━━━━━━━━━━━
+👤 *ગ્રાહક:* ${selectedCustomer ? selectedCustomer.name : "Walk-in Customer"}
+📄 *બિલ નં:* ${invNumber}
+📅 *તારીખ:* ${invDate}
+
+🛍️ *ખરીદેલી વસ્તુઓની વિગત:*
+${itemsList}
+━━━━━━━━━━━━━━━━━━━━
+💵 *સબટોટલ:* ₹${subtotalVal}
+📊 *GST ટેક્સ:* ₹${taxTotalVal}
+💰 *કુલ રકમ:* *₹${grandTotalVal}*
+✅ *પેમેન્ટ સ્ટેટસ:* ચૂકતે (${paymentMethod.toUpperCase()})
+
+🙏 *મુલાકાત બદલ ખૂબ ખૂબ આભાર! ફરી પધારશો.*`;
+
       Alert.alert(
         "સફળતા! 🎉",
-        `બિલ સફળતાપૂર્વક બની ગયું છે!\nકુલ રકમ: ₹${totals.grandTotal.toFixed(2)}`,
+        `બિલ નં: ${invNumber}\nકુલ રકમ: ₹${grandTotalVal}`,
         [
           {
             text: "WhatsApp પર મોકલો 💬",
             onPress: () => {
-              const phone = selectedCustomer?.phone || "";
-              const msg = `નમસ્તે! VOLONCE તરફથી તમારું બિલ જનરેટ થઈ ગયું છે.\nસબટોટલ: ₹${totals.subtotal.toFixed(2)}\nટેક્સ/GST: ₹${totals.taxTotal.toFixed(2)}\nકુલ રકમ: ₹${totals.grandTotal.toFixed(2)}\nચુકવણી: ${paymentMethod.toUpperCase()}.\nધન્યવાદ!`;
-              Linking.openURL(
-                `whatsapp://send?phone=${phone}&text=${encodeURIComponent(msg)}`
-              ).catch(() => {
+              const phone = selectedCustomer?.mobile || selectedCustomer?.phone || "";
+              const cleanPhone = phone.replace(/[^0-9]/g, "");
+              const formattedPhone = cleanPhone.length === 10 ? "91" + cleanPhone : cleanPhone;
+              const url = formattedPhone
+                ? `whatsapp://send?phone=${formattedPhone}&text=${encodeURIComponent(professionalMsg)}`
+                : `whatsapp://send?text=${encodeURIComponent(professionalMsg)}`;
+
+              Linking.openURL(url).catch(() => {
                 Alert.alert("WhatsApp", "WhatsApp ખૂલી શક્યું નથી.");
               });
               onBack();
@@ -158,7 +192,6 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <Text style={styles.backText}>← પાછા જાઓ</Text>
@@ -201,7 +234,6 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
             }}
           />
 
-          {/* Payment Method Selector */}
           <View style={styles.paymentSelector}>
             <Text style={styles.payLabel}>ચુકવણી પદ્ધતિ (Payment Mode):</Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
@@ -224,7 +256,6 @@ export default function BillingScreen({ onBack }: BillingScreenProps) {
             </View>
           </View>
 
-          {/* Bottom Bar: Total & Confirm */}
           <View style={styles.bottomBar}>
             <View>
               <Text style={styles.totalLabel}>

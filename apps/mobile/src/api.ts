@@ -1,3 +1,6 @@
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import * as Print from "expo-print";
 import { API_URL } from "./config";
 import { clearTokens, getAccess, getRefresh, saveTokens } from "./storage";
 
@@ -50,7 +53,7 @@ export type Product = {
   barcode?: string;
   selling_price: number | string;
   purchase_price: number | string;
-  tax_rate?: number;
+  tax_percent?: number | string;
   unit?: string;
   current_stock?: number;
   is_active: boolean;
@@ -59,31 +62,70 @@ export type Product = {
 export type Customer = {
   id: string;
   name: string;
+  mobile?: string;
   phone?: string;
   email?: string;
+  outstanding?: number | string;
   current_balance?: number | string;
 };
 
-export type InvoiceItemCreate = {
+// બિલ આઇટમ્સ અને પેમેન્ટ મોડેલ્સ
+export type InvoiceItemPayload = {
   product_id: string;
   quantity: number;
-  unit_price: number;
-  tax_rate?: number;
-  discount?: number;
+  discount_percent?: number;
+};
+
+export type PaymentPayload = {
+  method: "cash" | "upi" | "card" | "bank_transfer";
+  amount: number;
 };
 
 export type InvoiceCreatePayload = {
-  customer_id?: string;
-  items: InvoiceItemCreate[];
-  payment_mode?: "CASH" | "UPI" | "CREDIT" | "CARD";
-  paid_amount?: number;
+  customer_id?: string | null;
+  items: InvoiceItemPayload[];
+  payments: PaymentPayload[];
   notes?: string;
+};
+
+// AI સ્કેન પરિણામ મોડેલ્સ
+export type ScannedItem = {
+  raw_name: string;
+  matched_product_id: string | null;
+  matched_product_name: string | null;
+  confidence: number;
+  quantity: number;
+  rate: number;
+  tax_percent: number;
+  total: number;
+};
+
+export type BillScanResponse = {
+  invoice_number?: string;
+  invoice_date?: string;
+  vendor_or_customer?: string;
+  items: ScannedItem[];
+  subtotal: number;
+  tax_total: number;
+  grand_total: number;
+  overall_confidence: number;
+};
+
+export type CustomerFaceMatchResponse = {
+  matched: boolean;
+  customer: {
+    id: string;
+    name: string;
+    mobile: string | null;
+    outstanding: number;
+    confidence: number;
+  } | null;
 };
 
 function message(data: unknown, fallback: string): string {
   const detail = (data as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return "Please check the entered details";
+  if (Array.isArray(detail)) return "દાખલ કરેલી વિગતો તપાસો (Validation Error)";
   return fallback;
 }
 
@@ -109,7 +151,7 @@ async function raw(
       signal: controller.signal,
     });
   } catch {
-    throw new ApiError("Server sathe connect thayu nathi. Wi-Fi ane IP check karo.", 0);
+    throw new ApiError("સર્વર સાથે કનેક્ટ થઈ શક્યું નથી. Wi-Fi અને IP ચેક કરો.", 0);
   } finally {
     clearTimeout(timer);
   }
@@ -117,7 +159,7 @@ async function raw(
 
 async function parse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let msg = "Something went wrong";
+    let msg = "કંઈક ખોટું થયું છે";
     try {
       msg = message(await res.json(), msg);
     } catch {}
@@ -158,6 +200,8 @@ export async function authRequest<T>(
   return parse<T>(res);
 }
 
+// ---------------- AUTHENTICATION APIS ----------------
+
 export async function login(email: string, password: string): Promise<TokenResponse> {
   const t = await parse<TokenResponse>(
     await raw("POST", "/api/v1/auth/login", { email: email.trim(), password })
@@ -189,13 +233,13 @@ export const getDashboardSummary = (from?: string, to?: string) => {
 
 // Catalog / Products
 export const getProducts = () =>
-  authRequest<{ items: Product[] } | Product[]>("GET", "/api/v1/products");
+  authRequest<{ items: Product[] } | Product[]>("GET", "/api/v1/products?page_size=100");
 
 // Customers
 export const getCustomers = () =>
-  authRequest<{ items: Customer[] } | Customer[]>("GET", "/api/v1/customers");
+  authRequest<{ items: Customer[] } | Customer[]>("GET", "/api/v1/customers?page_size=100");
 
-// Create Invoice (Generates random Idempotency-Key)
+// Create Invoice
 export const createInvoice = (payload: InvoiceCreatePayload) => {
   const idempotencyKey =
     "m-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 9);
@@ -203,3 +247,111 @@ export const createInvoice = (payload: InvoiceCreatePayload) => {
     "Idempotency-Key": idempotencyKey,
   });
 };
+
+// ---------------- Helper to convert file URI to Blob ----------------
+function uriToBlob(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = function () {
+      resolve(xhr.response);
+    };
+    xhr.onerror = function () {
+      reject(new ApiError("ફોટો વાંચવામાં સમસ્યા આવી.", 0));
+    };
+    xhr.responseType = "blob";
+    xhr.open("GET", uri, true);
+    xhr.send(null);
+  });
+}
+
+// ---------------- AI CAMERA SCANNING APIS ----------------
+
+// ૧. કેમેરા ફોટો પરથી Gemini AI સ્કેનર (Android-Safe Blob Upload)
+export async function scanBillImage(imageUri: string): Promise<BillScanResponse> {
+  let token = await getAccess();
+  const fileBlob = await uriToBlob(imageUri);
+
+  const upload = async (bearerToken: string | null) => {
+    const formData = new FormData();
+    formData.append("file", fileBlob, "camera_scan.jpg");
+
+    return await fetch(`${API_URL}/api/v1/ai/scan-bill`, {
+      method: "POST",
+      headers: {
+        Authorization: bearerToken ? `Bearer ${bearerToken}` : "",
+      },
+      body: formData,
+    });
+  };
+
+  let res = await upload(token);
+  if (res.status === 401 && (await refreshTokens())) {
+    token = await getAccess();
+    res = await upload(token);
+  }
+
+  return parse<BillScanResponse>(res);
+}
+
+// ૨. ગ્રાહકનો ચહેરો ઓળખવા માટે (Android-Safe Blob Upload)
+export async function matchCustomerFace(imageUri: string): Promise<CustomerFaceMatchResponse> {
+  let token = await getAccess();
+  const fileBlob = await uriToBlob(imageUri);
+
+  const upload = async (bearerToken: string | null) => {
+    const formData = new FormData();
+    formData.append("file", fileBlob, "face_scan.jpg");
+
+    return await fetch(`${API_URL}/api/v1/ai/match-customer-face`, {
+      method: "POST",
+      headers: {
+        Authorization: bearerToken ? `Bearer ${bearerToken}` : "",
+      },
+      body: formData,
+    });
+  };
+
+  let res = await upload(token);
+  if (res.status === 401 && (await refreshTokens())) {
+    token = await getAccess();
+    res = await upload(token);
+  }
+
+  return parse<CustomerFaceMatchResponse>(res);
+}
+
+// ---------------- PDF ડાઉનલોડ, પ્રિન્ટ અને શેર ફંક્શન્સ ----------------
+
+// ૧. સર્વર પરથી અસલ રંગીન PDF ડાઉનલોડ કરી ફોનમાં સેવ કરવા માટે (Using Expo Legacy API)
+export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<string> {
+  const token = await getAccess();
+  const fileUri = `${FileSystem.documentDirectory}Invoice-${invoiceNumber}.pdf`;
+
+  const downloadResult = await FileSystem.downloadAsync(
+    `${API_URL}/api/v1/whatsapp/invoices/${invoiceId}/download-pdf`,
+    fileUri,
+    {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : "",
+      },
+    }
+  );
+
+  return downloadResult.uri;
+}
+
+// ૨. મોબાઈલમાંથી સીધા પ્રિન્ટર પર પ્રિન્ટ કરવા માટે
+export async function printInvoicePdf(fileUri: string) {
+  await Print.printAsync({ uri: fileUri });
+}
+
+// ૩. ફોનમાં PDF સેવ / શેર / ડાઉનલોડ્સ ફોલ્ડરમાં મૂકવા માટે
+export async function shareOrSavePdf(fileUri: string) {
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(fileUri, {
+      mimeType: "application/pdf",
+      dialogTitle: "Invoice PDF",
+      UTI: "com.adobe.pdf",
+    });
+  }
+}

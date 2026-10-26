@@ -1,20 +1,21 @@
 {
-    "expo":  {
-                 "name":  "Volonce Billing",
-                 "slug":  "volonce-ai-billing",
-                 "version":  "1.0.0",
-                 "orientation":  "portrait",
-                 "userInterfaceStyle":  "light",
-                 "android":  {
-                                 "package":  "com.volonce.billing"
-                             },
-                 "ios":  {
-                             "supportsTablet":  true,
-                             "bundleIdentifier":  "com.volonce.billing"
-                         },
-                 "plugins":  [
-                                 "expo-secure-store",
-                                 "expo-status-bar"
-                             ]
-             }
+  "expo": {
+    "name": "Volonce Billing",
+    "slug": "volonce-ai-billing",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.volonce.billing"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.volonce.billing"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-status-bar",
+      "expo-sharing"
+    ]
+  }
 }

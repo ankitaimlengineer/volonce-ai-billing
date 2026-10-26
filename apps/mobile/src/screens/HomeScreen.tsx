@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getDashboardSummary, DashboardSummary, logout, Me } from "../api";
+import { getDashboardSummary, DashboardSummary, Me } from "../api";
 import { colors } from "../theme";
 
 interface HomeScreenProps {
@@ -62,9 +62,39 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {loading ? (
-          <ActivityIndicator size="large" color={colors.primary || "#2563EB"} style={{ marginTop: 40 }} />
+          <ActivityIndicator size="large" color={colors.primary || "#047857"} style={{ marginTop: 40 }} />
         ) : (
           <>
+            {/* Quick Actions (સૌથી ઉપર મુખ્ય બટન્સ) */}
+            <Text style={styles.sectionTitle}>ઝડપી કામગીરી (Quick Actions)</Text>
+            <View style={styles.actionRow}>
+              {/* ૧. મુખ્ય ફીચર: AI કેમેરા બિલિંગ */}
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#047857" }]}
+                onPress={() => navigation?.navigate?.("AiCamera")}
+              >
+                <Text style={styles.actionBtnText}>📸 AI કેમેરા બિલ (Smart Scan)</Text>
+                <Text style={styles.actionBtnSubText}>ફોટો પાડીને ૧-ક્લિકમાં બિલ બનાવો</Text>
+              </TouchableOpacity>
+
+              {/* ૨. સાદું POS બિલિંગ */}
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#2563EB" }]}
+                onPress={() => navigation?.navigate?.("Billing")}
+              >
+                <Text style={styles.actionBtnText}>+ સાદું બિલ (Manual POS)</Text>
+                <Text style={styles.actionBtnSubText}>મેન્યુઅલ પ્રોડક્ટ પસંદ કરીને</Text>
+              </TouchableOpacity>
+
+              {/* ૩. સ્ટોક તપાસ */}
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#475569" }]}
+                onPress={() => navigation?.navigate?.("Products")}
+              >
+                <Text style={styles.actionBtnText}>📦 સ્ટોક તપાસો (Products)</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Quick Stats Grid */}
             <Text style={styles.sectionTitle}>આજનો હિસાબ (Today's Overview)</Text>
 
@@ -114,23 +144,6 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                 <Text style={styles.alertText}>ઓછો સ્ટોક (Low Stock)</Text>
               </View>
             </View>
-
-            {/* Quick Actions */}
-            <Text style={styles.sectionTitle}>ઝડપી કામગીરી (Quick Actions)</Text>
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={() => navigation?.navigate?.("Billing")}
-              >
-                <Text style={styles.actionBtnText}>+ નવું બિલ બનાવો (POS)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, { backgroundColor: "#475569" }]}
-                onPress={() => navigation?.navigate?.("Products")}
-              >
-                <Text style={styles.actionBtnText}>સ્ટોક તપાસો (Products)</Text>
-              </TouchableOpacity>
-            </View>
           </>
         )}
       </ScrollView>
@@ -167,6 +180,20 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 10,
   },
+  actionRow: { marginBottom: 10, gap: 10 },
+  actionBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+  },
+  actionBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  actionBtnSubText: { color: "#F1F5F9", fontSize: 11, marginTop: 2, fontWeight: "500" },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -199,12 +226,4 @@ const styles = StyleSheet.create({
   },
   alertNumber: { fontSize: 22, fontWeight: "800" },
   alertText: { fontSize: 12, color: "#475569", marginTop: 4, fontWeight: "500" },
-  actionRow: { marginTop: 6, gap: 10 },
-  actionBtn: {
-    backgroundColor: "#2563EB",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  actionBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
 });

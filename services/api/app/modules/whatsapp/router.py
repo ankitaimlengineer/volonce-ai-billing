@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.core.deps import get_db, require_roles
-from app.models import Invoice, BusinessSettings, Organization, Customer, User
+from app.models import Invoice, InvoiceItem, BusinessSettings, Organization, Customer, User
 from app.modules.whatsapp.client import whatsapp_client
 from app.modules.whatsapp.pdf_service import generate_invoice_pdf_bytes
 from app.modules.whatsapp.schemas import SendInvoiceWhatsAppRequest, WhatsAppSendResponse
@@ -24,12 +24,13 @@ async def send_invoice_via_whatsapp(
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
 
+    items = db.scalars(select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)).all()
     org = db.get(Organization, org_id)
     settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
     customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
 
-    # Generate PDF bytes
-    pdf_bytes = generate_invoice_pdf_bytes(invoice, org, settings, customer)
+    # Generate PDF bytes with items
+    pdf_bytes = generate_invoice_pdf_bytes(invoice, items, org, settings, customer)
     filename = f"Invoice-{invoice.invoice_number}.pdf"
     clean_phone = whatsapp_client.clean_phone_number(payload.phone)
 
@@ -41,7 +42,6 @@ async def send_invoice_via_whatsapp(
         f"ધન્યવાદ! ફરી પધારશો."
     )
 
-    # 1. If Meta Cloud API is configured in .env -> Send directly in background
     if whatsapp_client.is_configured:
         media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
         if media_id:
@@ -54,7 +54,6 @@ async def send_invoice_via_whatsapp(
                     message_id=result.get("data", {}).get("messages", [{}])[0].get("id"),
                 )
 
-    # 2. Smart Fallback: generate direct WhatsApp Intent link
     encoded_caption = urllib.parse.quote(caption)
     fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
 
@@ -76,11 +75,13 @@ def download_invoice_pdf_endpoint(
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
 
+    items = db.scalars(select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)).all()
     org = db.get(Organization, org_id)
     settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
     customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
 
-    pdf_bytes = generate_invoice_pdf_bytes(invoice, org, settings, customer)
+    # Generate PDF bytes with items
+    pdf_bytes = generate_invoice_pdf_bytes(invoice, items, org, settings, customer)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
