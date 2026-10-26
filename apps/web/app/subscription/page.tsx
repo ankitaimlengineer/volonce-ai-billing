@@ -24,6 +24,51 @@ interface SubscriptionStatus {
   status: string;
 }
 
+interface RazorpayOrderResponse {
+  order_id: string;
+  amount: number;
+  currency: string;
+  key_id: string;
+  plan_slug: string;
+  plan_name: string;
+}
+
+interface RazorpayPaymentSuccessResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (response: RazorpayPaymentSuccessResponse) => Promise<void> | void;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  theme?: {
+    color?: string;
+  };
+}
+
+interface RazorpayInstance {
+  open: () => void;
+}
+
+type RazorpayConstructor = new (options: RazorpayOptions) => RazorpayInstance;
+
+declare global {
+  interface Window {
+    Razorpay?: RazorpayConstructor;
+  }
+}
+
 export default function SubscriptionPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subStatus, setSubStatus] = useState<SubscriptionStatus | null>(null);
@@ -31,7 +76,19 @@ export default function SubscriptionPage() {
   const [reload, setReload] = useState(0);
   const [activating, setActivating] = useState<string | null>(null);
 
-  // Next.js 16 & React 19 Safe Async Data Loader
+  // Razorpay Checkout JS SDK Script ઓટોમેટિક લોડ થશે
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    document.body.appendChild(script);
+
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  // સબસ્ક્રિપ્શન પ્લાન અને સ્ટેટસ લોડ કરો
   useEffect(() => {
     let cancelled = false;
 
@@ -59,16 +116,54 @@ export default function SubscriptionPage() {
     };
   }, [reload]);
 
-  const handleSubscribe = async (planSlug: string) => {
-    setActivating(planSlug);
+  // Razorpay પેમેન્ટ સિસ્ટમ
+  const handleSubscribeWithRazorpay = async (plan: Plan) => {
+    setActivating(plan.slug);
     try {
-      const res = await authPost<{ success: boolean; message: string }>(
-        `/api/v1/subscription/activate-plan/${planSlug}`
+      // 1. Backend માંથી Razorpay Order બનાવો
+      const order = await authPost<RazorpayOrderResponse>(
+        `/api/v1/subscription/create-order/${plan.slug}`
       );
-      alert(res.message);
-      setReload((n) => n + 1); // Auto reload subscription data
+
+      // 2. Razorpay પોપ-અપ ઓપ્શન્સ સેટ કરો
+      const options: RazorpayOptions = {
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: "VOLONCE AI BILLING",
+        description: `${plan.name} (${plan.duration_days} દિવસનું સબસ્ક્રિપ્શન)`,
+        order_id: order.order_id,
+        handler: async function (response: RazorpayPaymentSuccessResponse) {
+          try {
+            // 3. પેમેન્ટ સક્સેસ થાય એટલે Backend માં વેરિફાય કરાવો
+            const res = await authPost<{ success: boolean; message: string }>(
+              "/api/v1/subscription/verify-payment",
+              {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                plan_slug: plan.slug,
+              }
+            );
+            alert(res.message);
+            setReload((n) => n + 1); // પેજ આપોઆપ રીલોડ થઈને પ્લાન એક્ટિવ થઈ જશે
+          } catch {
+            alert("પેમેન્ટ વેરિફિકેશન નિષ્ફળ ગયું.");
+          }
+        },
+        theme: {
+          color: "#047857", // Signature Emerald Green
+        },
+      };
+
+      if (window.Razorpay) {
+        const rzp = new window.Razorpay(options);
+        rzp.open();
+      } else {
+        alert("Razorpay SDK લોડ થઈ શક્યું નથી. કૃપા કરીને પેજ રિફ્રેશ કરો.");
+      }
     } catch {
-      alert("પ્લાન ખરીદવામાં સમસ્યા આવી. ફરી પ્રયાસ કરો.");
+      alert("ઓર્ડર બનાવવામાં સમસ્યા આવી. ફરી પ્રયાસ કરો.");
     } finally {
       setActivating(null);
     }
@@ -106,30 +201,69 @@ export default function SubscriptionPage() {
             {subStatus && (
               <div
                 className={`mb-10 rounded-2xl p-6 shadow-md border-2 ${
-                  subStatus.is_active
+                  subStatus.is_active && subStatus.days_left > 0
                     ? "bg-gradient-to-r from-emerald-800 to-teal-900 text-white border-emerald-700"
-                    : "bg-red-50 text-red-900 border-red-300"
+                    : "bg-red-50 text-red-950 border-red-500 shadow-red-100"
                 }`}
               >
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <span className="text-xs font-black uppercase tracking-wider text-emerald-200 bg-white/20 px-3 py-1 rounded-full">
-                      {subStatus.is_trial ? "Free Trial સક્રિય છે" : "Active Subscription"}
+                    {/* લાલ કલરનું સ્પષ્ટ બેજ */}
+                    <span
+                      className={`text-xs font-black uppercase tracking-wider px-3.5 py-1.5 rounded-full inline-block shadow-sm ${
+                        subStatus.is_active && subStatus.days_left > 0
+                          ? "text-emerald-100 bg-white/20"
+                          : "bg-red-600 text-white font-bold"
+                      }`}
+                    >
+                      {subStatus.is_active && subStatus.days_left > 0
+                        ? subStatus.is_trial
+                          ? "✓ Free Trial સક્રિય છે"
+                          : "✓ સક્રિય સબસ્ક્રિપ્શન (ACTIVE)"
+                        : "⚠️ પ્લાન સમાપ્ત થયેલ છે (EXPIRED)"}
                     </span>
-                    <h2 className="text-2xl font-black mt-2">{subStatus.plan_name}</h2>
-                    <p className="text-xs text-emerald-100 mt-0.5">
+                    <h2
+                      className={`text-2xl font-black mt-2.5 ${
+                        subStatus.is_active && subStatus.days_left > 0
+                          ? "text-white"
+                          : "text-red-900"
+                      }`}
+                    >
+                      {subStatus.plan_name}
+                    </h2>
+                    <p
+                      className={`text-xs mt-1 font-semibold ${
+                        subStatus.is_active && subStatus.days_left > 0
+                          ? "text-emerald-100"
+                          : "text-red-700"
+                      }`}
+                    >
                       મુદત: {new Date(subStatus.expires_at).toLocaleDateString("en-IN")} સુધી માન્ય
                     </p>
                   </div>
 
                   <div className="text-right">
-                    <span className="text-xs uppercase font-bold text-emerald-200 block">બાકી સમય:</span>
-                    <p className="text-3xl font-black font-mono">
-                      {subStatus.days_left} <span className="text-base font-medium">દિવસ બાકી</span>
+                    <span
+                      className={`text-xs uppercase font-extrabold block ${
+                        subStatus.is_active && subStatus.days_left > 0
+                          ? "text-emerald-200"
+                          : "text-red-600"
+                      }`}
+                    >
+                      બાકી સમય:
+                    </span>
+                    <p
+                      className={`text-3xl font-black font-mono ${
+                        subStatus.is_active && subStatus.days_left > 0
+                          ? "text-white"
+                          : "text-red-700"
+                      }`}
+                    >
+                      {subStatus.days_left} <span className="text-base font-bold">દિવસ બાકી</span>
                     </p>
                     {subStatus.days_left <= 2 && (
-                      <span className="text-[11px] font-bold text-amber-300 block mt-1">
-                        ⚠️ વહેલી તકે પ્લાન રીન્યુ કરો
+                      <span className="text-xs font-black text-red-700 bg-red-100 border border-red-300 px-2.5 py-1 rounded-md block mt-1.5 shadow-sm">
+                        ⚠️ વહેલી તકે નવો પ્લાન ખરીદો / રીન્યુ કરો
                       </span>
                     )}
                   </div>
@@ -140,7 +274,7 @@ export default function SubscriptionPage() {
             {/* Feature Highlights */}
             <div className="mb-8 rounded-xl bg-white p-5 border border-emerald-200 shadow-sm text-center">
               <p className="text-xs md:text-sm font-extrabold text-emerald-900">
-                ✨ દરેક પ્લાનમાં તમામ સુવિધાઓ ઉપલબ્ધ: AI કેમેરા સ્કેનર • ગ્રાહક Face Recognition • GST બિલિંગ • WhatsApp શેરિંગ • સ્ટોક મેનેજમેન્ટ
+                ✨ સુરક્ષિત Razorpay UPI, GPay, PhonePe, Paytm, ડેબિટ/ક્રેડિટ કાર્ડ દ્વારા ત્વરિત સક્રિયકરણ
               </p>
             </div>
 
@@ -148,7 +282,10 @@ export default function SubscriptionPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {plans.map((p) => {
                 const isYearly = p.slug === "yearly";
-                const isCurrent = subStatus?.plan_slug === p.slug && subStatus?.is_active;
+                const isCurrent =
+                  subStatus?.plan_slug === p.slug &&
+                  subStatus?.is_active &&
+                  (subStatus?.days_left ?? 0) > 0;
 
                 return (
                   <div
@@ -189,9 +326,9 @@ export default function SubscriptionPage() {
 
                     <button
                       type="button"
-                      onClick={() => handleSubscribe(p.slug)}
+                      onClick={() => handleSubscribeWithRazorpay(p)}
                       disabled={activating === p.slug}
-                      className={`mt-6 w-full rounded-xl py-3 text-xs md:text-sm font-extrabold shadow-md transition ${
+                      className={`mt-6 w-full rounded-xl py-3 text-xs md:text-sm font-extrabold shadow-md transition flex items-center justify-center gap-2 ${
                         isCurrent
                           ? "bg-gray-100 text-gray-400 cursor-not-allowed border"
                           : isYearly
@@ -202,8 +339,8 @@ export default function SubscriptionPage() {
                       {isCurrent
                         ? "✓ તમારો વર્તમાન પ્લાન"
                         : activating === p.slug
-                        ? "ચાલુ થઈ રહ્યું છે..."
-                        : `પસંદ કરો (₹${Number(p.price).toFixed(0)})`}
+                        ? "Razorpay ખુલી રહ્યું છે..."
+                        : `💳 પસંદ કરો (₹${Number(p.price).toFixed(0)})`}
                     </button>
                   </div>
                 );
