@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, authGet, clearTokens } from "@/lib/api";
 import NotificationBell from "@/app/components/NotificationBell";
+import LanguageSwitcher from "@/app/components/LanguageSwitcher";
+import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { translations } from "@/lib/i18n/translations";
 import DashboardCharts from "./DashboardCharts";
 
 type DailyTrendPoint = {
@@ -69,13 +72,13 @@ function rangeFor(p: Preset): Range {
   return { from: iso(new Date(now.getFullYear(), 0, 1)), to: iso(now) };
 }
 
-const PRESETS: [Preset, string][] = [
-  ["today", "Today (આજે)"],
-  ["yesterday", "Yesterday (ગઈકાલે)"],
-  ["week", "This Week (આ અઠવાડિયે)"],
-  ["month", "This Month (આ મહિને)"],
-  ["year", "This Year (આ વર્ષે)"],
-  ["custom", "Custom (તારીખ પસંદ કરો)"],
+const PRESETS: [Preset, keyof typeof translations["gu"]][] = [
+  ["today", "today"],
+  ["yesterday", "yesterday"],
+  ["week", "this_week"],
+  ["month", "this_month"],
+  ["year", "this_year"],
+  ["custom", "custom"],
 ];
 
 function Card({
@@ -102,6 +105,7 @@ const money = (v: string) => `₹${v}`;
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [preset, setPreset] = useState<Preset>("today");
   const [range, setRange] = useState<Range>(null);
   const [from, setFrom] = useState("");
@@ -164,14 +168,17 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
-        {/* Top Header with Notification Bell, AI Counter & New Bill Buttons */}
+        {/* Top Header with Language Switcher, Notification Bell, AI Counter & New Bill Buttons */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200/80 pb-4">
           <div>
-            <h1 className="text-2xl font-black text-emerald-950">Dashboard (ડેશબોર્ડ)</h1>
-            <p className="text-xs text-gray-500 mt-0.5">VOLONCE AI BILLING • દુકાનનો દૈનિક હિસાબ</p>
+            <h1 className="text-2xl font-black text-emerald-950">{t("dashboard")}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">{t("store_daily_records")}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* 🌐 ૧-ક્લિક ભાષા સ્વિચર */}
+            <LanguageSwitcher />
+
             {/* 🔔 Live Notification Bell */}
             <NotificationBell />
 
@@ -180,23 +187,23 @@ export default function DashboardPage() {
               href="/billing/ai-counter"
               className="flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2.5 text-sm font-black text-white shadow-lg hover:bg-emerald-900 transition"
             >
-              ⚡ સ્માર્ટ AI કાઉન્ટર (Smart POS)
+              {t("smart_ai_counter")}
             </Link>
 
             <Link
               href="/billing/new"
               className="rounded-xl border-2 border-emerald-700 bg-white px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-50 shadow-sm transition"
             >
-              + સાદું બિલ (New Bill)
+              {t("new_bill")}
             </Link>
           </div>
         </div>
 
         {/* Date Filter Tabs */}
         <div className="mt-5 flex flex-wrap items-center gap-2">
-          {PRESETS.map(([k, l]) => (
+          {PRESETS.map(([k, transKey]) => (
             <button key={k} className={tab(preset === k)} onClick={() => choose(k)}>
-              {l}
+              {t(transKey)}
             </button>
           ))}
         </div>
@@ -204,7 +211,7 @@ export default function DashboardPage() {
         {preset === "custom" && (
           <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 border border-emerald-100 shadow-sm">
             <label className="text-xs font-bold text-gray-700">
-              ક્યારથી (From)
+              {t("from")}
               <input
                 type="date"
                 value={from}
@@ -213,7 +220,7 @@ export default function DashboardPage() {
               />
             </label>
             <label className="text-xs font-bold text-gray-700">
-              ક્યાં સુધી (To)
+              {t("to")}
               <input
                 type="date"
                 value={to}
@@ -225,7 +232,7 @@ export default function DashboardPage() {
               onClick={applyCustom}
               className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-800"
             >
-              બતાવો (Show)
+              {t("show")}
             </button>
           </div>
         )}
@@ -239,44 +246,44 @@ export default function DashboardPage() {
         {data && (
           <>
             <p className="mt-4 text-xs font-semibold text-gray-500">
-              સમયગાળો: {data.date_from === data.date_to ? data.date_from : `${data.date_from} થી ${data.date_to}`}
+              {t("period")}: {data.date_from === data.date_to ? data.date_from : `${data.date_from} થી ${data.date_to}`}
             </p>
 
             {/* Overview Metrics Cards */}
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Card
-                title="આજનું વેચાણ (Sales)"
+                title={t("today_sales")}
                 value={money(data.sales)}
                 tone="text-emerald-800"
-                sub={`${data.bills} બિલો બન્યા`}
+                sub={`${data.bills} ${t("bills_created")}`}
               />
-              <Card title="કુલ બિલો (Bills)" value={String(data.bills)} />
+              <Card title={t("total_bills")} value={String(data.bills)} />
               <Card
-                title="રોકડ વસૂલાત (Collections)"
+                title={t("cash_collections")}
                 value={money(data.collections)}
                 tone="text-emerald-700"
               />
-              <Card title="માલની ખરીદી (Purchases)" value={money(data.purchases)} />
+              <Card title={t("purchases")} value={money(data.purchases)} />
               <Card
-                title="કુલ નફો (Gross Profit)"
+                title={t("gross_profit")}
                 value={money(data.gross_profit)}
                 tone={profitTone(data.gross_profit)}
-                sub={`માર્જિન: ${data.margin_percent}%`}
+                sub={`${t("margin")}: ${data.margin_percent}%`}
               />
               <Card
-                title="દુકાનના ખર્ચા (Expenses)"
+                title={t("expenses")}
                 value={money(data.expenses)}
                 tone="text-amber-700"
               />
               <Card
-                title="ચોખ્ખો નફો (Net Profit)"
+                title={t("net_profit")}
                 value={money(data.net_profit)}
                 tone={profitTone(data.net_profit)}
               />
-              <Card title="માલની પડતર (COGS)" value={money(data.cogs)} />
+              <Card title={t("cogs")} value={money(data.cogs)} />
             </div>
 
-            {/* 📈 પગલું ૩: Recharts Graphical Charts Section */}
+            {/* 📈 Recharts Graphical Charts Section */}
             <div className="mt-7">
               <DashboardCharts
                 trendData={data.daily_trend || []}
@@ -286,39 +293,39 @@ export default function DashboardPage() {
 
             {/* Outstanding & Inventory Stock Status */}
             <h2 className="mt-7 text-xs font-extrabold uppercase tracking-wider text-gray-500">
-              હાલની સ્થિતિ (Current Live Status)
+              {t("current_status")}
             </h2>
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Link href="/customers" className="block">
                 <Card
-                  title="ગ્રાહકો પાસેથી લેવાના (Receivable)"
+                  title={t("receivable")}
                   value={money(data.receivable)}
                   tone="text-emerald-800"
-                  sub="ઉધારી રકમ (જુઓ →)"
+                  sub={t("receivable_sub")}
                 />
               </Link>
               <Link href="/suppliers" className="block">
                 <Card
-                  title="વેપારીઓને આપવાના (Payable)"
+                  title={t("payable")}
                   value={money(data.payable)}
                   tone="text-amber-800"
-                  sub="બાકી ચૂકવણી (જુઓ →)"
+                  sub={t("payable_sub")}
                 />
               </Link>
               <Link href="/stock" className="block">
                 <Card
-                  title="દુકાનમાં સ્ટોક કિંમત (Stock Value)"
+                  title={t("stock_value")}
                   value={money(data.stock_value)}
                   tone="text-slate-900"
-                  sub="કુલ માલ કિંમત"
+                  sub={t("total_stock_value")}
                 />
               </Link>
               <Link href="/stock" className="block">
                 <Card
-                  title="ઓછો / ખલાસ સ્ટોક (Stock Alert)"
+                  title={t("stock_alert")}
                   value={`${data.low_stock} / ${data.out_of_stock}`}
                   tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"}
-                  sub="ધ્યાન આપવાની જરૂર (જુઓ →)"
+                  sub={t("attention_needed")}
                 />
               </Link>
             </div>
@@ -327,15 +334,15 @@ export default function DashboardPage() {
 
         {/* Quick Module Navigation Links */}
         <div className="mt-8 flex flex-wrap gap-2.5 border-t border-emerald-200/60 pt-6">
-          <Link href="/invoices" className={nav}>બિલો (Invoices)</Link>
-          <Link href="/products" className={nav}>પ્રોડક્ટ્સ (Products)</Link>
-          <Link href="/stock" className={nav}>સ્ટોક (Stock)</Link>
-          <Link href="/customers" className={nav}>ગ્રાહકો (Customers)</Link>
-          <Link href="/suppliers" className={nav}>વેપારીઓ (Suppliers)</Link>
-          <Link href="/purchases" className={nav}>ખરીદી (Purchases)</Link>
-          <Link href="/expenses" className={nav}>ખર્ચા (Expenses)</Link>
-          <Link href="/reports" className={nav}>રિપોર્ટ્સ (Reports)</Link>
-          <Link href="/subscription" className={nav}>સબસ્ક્રિપ્શન (Subscription)</Link>
+          <Link href="/invoices" className={nav}>{t("nav_invoices")}</Link>
+          <Link href="/products" className={nav}>{t("nav_products")}</Link>
+          <Link href="/stock" className={nav}>{t("nav_stock")}</Link>
+          <Link href="/customers" className={nav}>{t("nav_customers")}</Link>
+          <Link href="/suppliers" className={nav}>{t("nav_suppliers")}</Link>
+          <Link href="/purchases" className={nav}>{t("nav_purchases")}</Link>
+          <Link href="/expenses" className={nav}>{t("nav_expenses")}</Link>
+          <Link href="/reports" className={nav}>{t("nav_reports")}</Link>
+          <Link href="/subscription" className={nav}>{t("nav_subscription")}</Link>
         </div>
       </div>
     </main>

@@ -10,6 +10,8 @@ import {
   authUploadJson,
   clearTokens,
 } from "@/lib/api";
+import LanguageSwitcher from "@/app/components/LanguageSwitcher";
+import { useLanguage } from "@/lib/i18n/LanguageContext";
 
 type Product = {
   id: string;
@@ -33,6 +35,8 @@ const PAGE_SIZE = 20;
 
 export default function ProductsPage() {
   const router = useRouter();
+  const { t } = useLanguage();
+
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -50,11 +54,11 @@ export default function ProductsPage() {
 
   // Debounce: wait 300ms after typing stops, then search
   useEffect(() => {
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setQuery(search.trim());
       setPage(1);
     }, 300);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [search]);
 
   useEffect(() => {
@@ -110,7 +114,7 @@ export default function ProductsPage() {
         "/api/v1/products/import",
         file
       );
-      setNotice(`${res.imported} products import thaya.`);
+      setNotice(`${res.imported} products imported successfully.`);
       setPage(1);
       setReload((n) => n + 1);
     } catch (err) {
@@ -123,17 +127,26 @@ export default function ProductsPage() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
   const secondary =
-    "rounded-lg border border-emerald-700 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50";
+    "rounded-xl border border-emerald-700 bg-white px-3 py-2 text-xs font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 transition";
 
   return (
-    <main className="min-h-screen bg-emerald-50 p-6">
-      <div className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold text-emerald-800">Products</h1>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link href="/dashboard" className="text-sm text-gray-600 hover:underline">
-              ← Dashboard
+    <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
+      <div className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow-md border border-emerald-100">
+        {/* Header with Title and Global Language Switcher */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+          <h1 className="text-2xl font-black text-emerald-950">{t("products_title")}</h1>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* 🌐 ભાષા સ્વિચર */}
+            <LanguageSwitcher />
+
+            <Link
+              href="/dashboard"
+              className="rounded-xl border border-emerald-700 bg-white px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 transition"
+            >
+              {t("back_to_dashboard")}
             </Link>
+
             <button
               onClick={() =>
                 download("/api/v1/products/import/template", "products_template.csv")
@@ -142,8 +155,9 @@ export default function ProductsPage() {
             >
               Template
             </button>
+
             <label className={`${secondary} cursor-pointer`}>
-              {importing ? "Importing..." : "Import CSV"}
+              {importing ? t("saving") : "Import CSV"}
               <input
                 type="file"
                 accept=".csv,text/csv"
@@ -152,94 +166,99 @@ export default function ProductsPage() {
                 onChange={handleImport}
               />
             </label>
+
             <button
               onClick={() => download("/api/v1/products/export", "products.csv")}
               className={secondary}
             >
               Export
             </button>
+
             <Link
               href="/products/new"
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
+              className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-800 transition"
             >
-              + Add Product
+              {t("add_product_btn")}
             </Link>
           </div>
         </div>
 
+        {/* Search Bar */}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Naam, SKU, barcode ke brand thi shodho..."
-          className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          placeholder={t("search_product_list")}
+          className="mt-4 w-full rounded-xl border border-gray-300 px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
 
         {notice && (
-          <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
+          <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs font-bold text-emerald-800 border border-emerald-200">
             {notice}
           </p>
         )}
         {error && (
-          <p className="mt-4 whitespace-pre-line rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <p className="mt-4 whitespace-pre-line rounded-xl bg-red-50 p-3.5 text-xs font-bold text-red-700 border border-red-200">
             {error}
           </p>
         )}
 
+        {/* Products Table */}
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-emerald-700 text-left text-white">
-                <th className="p-2">Name</th>
-                <th className="p-2">SKU</th>
-                <th className="p-2">Unit</th>
-                <th className="p-2 text-right">Purchase</th>
-                <th className="p-2 text-right">Selling</th>
-                <th className="p-2 text-right">Tax %</th>
+              <tr className="bg-emerald-800 text-white font-extrabold uppercase tracking-wider">
+                <th className="p-3 rounded-l-lg">{t("item_col")}</th>
+                <th className="p-3">{t("sku_col")}</th>
+                <th className="p-3">{t("unit_col")}</th>
+                <th className="p-3 text-right">{t("purchase_price_col")}</th>
+                <th className="p-3 text-right">{t("selling_price_col")}</th>
+                <th className="p-3 text-right rounded-r-lg">{t("tax_col")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-emerald-100 font-medium">
               {loading && (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-gray-500">
-                    Loading...
+                  <td colSpan={6} className="p-6 text-center text-gray-500 font-semibold">
+                    {t("loading")}
                   </td>
                 </tr>
               )}
               {!loading && data?.items.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-gray-500">
-                    {query ? "Koi product nathi malyo." : "Haju koi product nathi."}
+                  <td colSpan={6} className="p-6 text-center text-gray-400 font-semibold">
+                    {t("no_products")}
                   </td>
                 </tr>
               )}
               {data?.items.map((p) => (
-                <tr key={p.id} className="border-b border-gray-200 text-gray-800">
-                  <td className="p-2 font-medium">
+                <tr key={p.id} className="hover:bg-emerald-50/40 transition">
+                  <td className="p-3 font-bold text-emerald-950">
                     <Link
                       href={`/products/${p.id}`}
-                      className="text-emerald-700 hover:underline"
+                      className="text-emerald-800 hover:underline"
                     >
                       {p.name}
                     </Link>
                   </td>
-                  <td className="p-2">{p.sku ?? "-"}</td>
-                  <td className="p-2">{p.unit}</td>
-                  <td className="p-2 text-right">₹{p.purchase_price}</td>
-                  <td className="p-2 text-right">₹{p.selling_price}</td>
-                  <td className="p-2 text-right">{p.tax_percent}</td>
+                  <td className="p-3 text-gray-600 font-mono">{p.sku ?? "-"}</td>
+                  <td className="p-3 text-gray-600">{p.unit}</td>
+                  <td className="p-3 text-right font-mono text-gray-700">₹{p.purchase_price}</td>
+                  <td className="p-3 text-right font-mono font-bold text-emerald-700">₹{p.selling_price}</td>
+                  <td className="p-3 text-right font-mono font-bold text-slate-800">{p.tax_percent}%</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
-          <span>Total: {data?.total ?? 0}</span>
-          <div className="flex items-center gap-3">
+        {/* Pagination Bar */}
+        <div className="mt-4 flex items-center justify-between text-xs font-semibold text-gray-600 border-t border-gray-100 pt-3">
+          <span>{t("total")}: {data?.total ?? 0}</span>
+          <div className="flex items-center gap-2.5">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setPage((pg) => Math.max(1, pg - 1))}
               disabled={page <= 1}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-40"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50 transition"
             >
               Previous
             </button>
@@ -247,9 +266,9 @@ export default function ProductsPage() {
               Page {page} / {totalPages}
             </span>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => setPage((pg) => Math.min(totalPages, pg + 1))}
               disabled={page >= totalPages}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-40"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50 transition"
             >
               Next
             </button>

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, authGet, authPost, clearTokens } from "@/lib/api";
 import WebcamCaptureModal from "@/app/components/WebcamCaptureModal";
+import LanguageSwitcher from "@/app/components/LanguageSwitcher";
+import { useLanguage } from "@/lib/i18n/LanguageContext";
 
 type Customer = { id: string; name: string; mobile: string | null };
 type Product = {
@@ -26,6 +28,8 @@ const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 export default function NewBillPage() {
   const router = useRouter();
+  const { t } = useLanguage();
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState("");
   const [search, setSearch] = useState("");
@@ -69,7 +73,7 @@ export default function NewBillPage() {
   useEffect(() => {
     const q = search.trim();
     let cancelled = false;
-    const t = setTimeout(async () => {
+    const tTimer = setTimeout(async () => {
       if (!q) {
         setResults([]);
         return;
@@ -85,7 +89,7 @@ export default function NewBillPage() {
     }, 250);
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(tTimer);
     };
   }, [search]);
 
@@ -132,11 +136,11 @@ export default function NewBillPage() {
       const base = rate * qty;
       const disc = r2((base * discPct) / 100);
       const taxable = base - disc;
-      const t = r2((taxable * taxPct) / 100);
+      const tVal = r2((taxable * taxPct) / 100);
 
       subtotal += base;
       discount += disc;
-      tax += t;
+      tax += tVal;
     }
     const total = r2(subtotal - discount + tax);
     return { subtotal, discount, tax, total };
@@ -194,32 +198,38 @@ export default function NewBillPage() {
   }
 
   return (
-    <main className="min-h-screen bg-emerald-50 p-6">
-      <form onSubmit={submit} className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow">
-        {/* Header */}
+    <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
+      <form onSubmit={submit} className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow-md border border-emerald-100">
+        {/* Header with Language Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 pb-4">
           <div>
-            <h1 className="text-2xl font-bold text-emerald-800">New Bill</h1>
-            <p className="text-xs text-gray-500">ઝડપી બિલિંગ અને કમ્પ્યુટર સ્કેનર</p>
+            <h1 className="text-2xl font-bold text-emerald-800">{t("create_bill_title")}</h1>
+            <p className="text-xs text-gray-500">{t("store_daily_records")}</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* 🌐 ૧-ક્લિક ભાષા સ્વિચર */}
+            <LanguageSwitcher />
+
             {/* Webcam Scanner Button */}
             <button
               type="button"
               onClick={() => setIsCameraOpen(true)}
-              className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700 transition"
+              className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs md:text-sm font-semibold text-white shadow hover:bg-emerald-800 transition"
             >
               📷 કેમેરા સ્કેનર (Webcam)
             </button>
 
-            <Link href="/dashboard" className="text-sm font-medium text-gray-600 hover:underline">
-              ← Dashboard
+            <Link
+              href="/dashboard"
+              className="rounded-xl border border-emerald-700 bg-white px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 transition"
+            >
+              {t("back_to_dashboard")}
             </Link>
           </div>
         </div>
 
-        {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700">{error}</p>}
 
         {/* Captured Webcam Image Preview Banner */}
         {capturedImage && (
@@ -233,7 +243,7 @@ export default function NewBillPage() {
               />
               <div>
                 <p className="text-sm font-bold text-emerald-900">✓ ફોટો સફળતાપૂર્વક કેપ્ચર થયો!</p>
-                <p className="text-xs text-emerald-700">Phase 10 AI મોડ્યુલ માટે તૈયાર છે</p>
+                <p className="text-xs text-emerald-700">AI મોડ્યુલ માટે તૈયાર છે</p>
               </div>
             </div>
             <button
@@ -248,13 +258,13 @@ export default function NewBillPage() {
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
-            <label className="text-sm font-medium text-gray-700">Customer</label>
+            <label className="text-sm font-medium text-gray-700">{t("select_customer")}</label>
             <select
               className={input}
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}
             >
-              <option value="">Walk-in (udhar nahi)</option>
+              <option value="">{t("walk_in_customer")}</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} {c.mobile ? `(${c.mobile})` : ""}
@@ -264,10 +274,10 @@ export default function NewBillPage() {
           </div>
 
           <div className="relative">
-            <label className="text-sm font-medium text-gray-700">Product shodho</label>
+            <label className="text-sm font-medium text-gray-700">{t("nav_products")}</label>
             <input
               type="text"
-              placeholder="Name, SKU athva barcode..."
+              placeholder={t("search_product_placeholder")}
               className={input}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -297,12 +307,12 @@ export default function NewBillPage() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-xs font-semibold uppercase text-gray-500">
-                <th className="py-2">Item</th>
-                <th className="py-2">Qty</th>
-                <th className="py-2">Rate</th>
-                <th className="py-2">Disc %</th>
-                <th className="py-2">Tax %</th>
-                <th className="py-2 text-right">Amount</th>
+                <th className="py-2">{t("item_col")}</th>
+                <th className="py-2">{t("qty_col")}</th>
+                <th className="py-2">{t("rate_col")}</th>
+                <th className="py-2">{t("disc_col")}</th>
+                <th className="py-2">{t("tax_col")}</th>
+                <th className="py-2 text-right">{t("amount_col")}</th>
                 <th className="py-2"></th>
               </tr>
             </thead>
@@ -366,7 +376,7 @@ export default function NewBillPage() {
         {/* Payments & Totals */}
         <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
-            <p className="text-sm font-medium text-gray-700">Payment</p>
+            <p className="text-sm font-medium text-gray-700">{t("payment_mode_label")}</p>
             {pays.map((p, i) => (
               <div key={i} className="mt-2 flex gap-2">
                 <select
@@ -378,10 +388,10 @@ export default function NewBillPage() {
                     )
                   }
                 >
-                  <option value="cash">Cash</option>
-                  <option value="upi">UPI</option>
-                  <option value="card">Card</option>
-                  <option value="bank_transfer">Bank transfer</option>
+                  <option value="cash">{t("cash")}</option>
+                  <option value="upi">{t("upi")}</option>
+                  <option value="card">{t("card")}</option>
+                  <option value="bank_transfer">{t("bank_transfer")}</option>
                 </select>
                 <input
                   type="number"
@@ -405,7 +415,7 @@ export default function NewBillPage() {
                   onClick={() => setPays((ps) => [...ps, { method: "upi", amount: "" }])}
                   className="font-medium text-emerald-700 hover:underline"
                 >
-                  + Bijo payment
+                  + બીજું પેમેન્ટ (Add Payment)
                 </button>
               )}
               <button
@@ -415,7 +425,7 @@ export default function NewBillPage() {
                 }
                 className="font-medium text-emerald-700 hover:underline"
               >
-                Poori payment
+                સંપૂર્ણ પેમેન્ટ (Full Paid)
               </button>
             </div>
           </div>
@@ -424,12 +434,11 @@ export default function NewBillPage() {
             <p>Subtotal: ₹{calc.subtotal.toFixed(2)}</p>
             <p>Discount: -₹{calc.discount.toFixed(2)}</p>
             <p>Tax: ₹{calc.tax.toFixed(2)}</p>
-            <p className="text-2xl font-bold text-emerald-800">Total: ₹{calc.total.toFixed(2)}</p>
-            <p>Paid: ₹{paid.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-emerald-800">{t("total")}: ₹{calc.total.toFixed(2)}</p>
+            <p>{t("paid")}: ₹{paid.toFixed(2)}</p>
             <p className={due > 0 ? "font-medium text-amber-700" : "text-gray-500"}>
-              Udhar: ₹{due.toFixed(2)}
+              {t("due")}: ₹{due.toFixed(2)}
             </p>
-            <p className="text-xs text-gray-400">(Final total server calculate karse)</p>
           </div>
         </div>
 
@@ -437,9 +446,9 @@ export default function NewBillPage() {
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-emerald-700 px-8 py-3 font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
+            className="rounded-xl bg-emerald-700 px-8 py-3 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-60 shadow-md transition"
           >
-            {saving ? "Saving..." : "Confirm Bill"}
+            {saving ? t("saving") : t("confirm_bill_btn")}
           </button>
         </div>
       </form>
