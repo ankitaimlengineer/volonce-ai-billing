@@ -24,3 +24,5 @@ pillow
 python-dotenv
 reportlab==4.2.5
 httpx==0.28.1
+celery==5.4.0
+redis==5.2.1

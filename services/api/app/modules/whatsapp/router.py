@@ -34,6 +34,10 @@ from app.modules.whatsapp.schemas import (
     WhatsAppMessageStatusOut,
     WhatsAppSendResponse,
 )
+from app.modules.whatsapp.tasks import (
+    send_invoice_whatsapp_task,
+    send_ledger_whatsapp_task,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -42,7 +46,7 @@ can_write = require_roles("owner", "manager", "cashier")
 
 
 # ==============================================================================
-# ૧. WHATSAPP પર બિલ મોકલો અને ટ્રેકિંગ શરૂ કરો
+# ૧. WHATSAPP પર બિલ મોકલો (CELERY ASYNC QUEUE + FAST RESPONSE)
 # ==============================================================================
 @router.post("/send-invoice/{invoice_id}", response_model=WhatsAppSendResponse)
 async def send_invoice_via_whatsapp(
@@ -61,40 +65,22 @@ async def send_invoice_via_whatsapp(
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
 
-    items = db.scalars(
-        select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
-    ).all()
-    payments = db.scalars(
-        select(InvoicePayment).where(InvoicePayment.invoice_id == invoice.id)
-    ).all()
-
-    org = db.get(Organization, org_id)
-    b_settings = db.scalar(
-        select(BusinessSettings).where(BusinessSettings.organization_id == org_id)
-    )
-    customer = (
-        db.get(Customer, invoice.customer_id) if invoice.customer_id else None
-    )
-
-    # PDF Bytes જનરેટ કરો
-    try:
-        pdf_bytes = generate_invoice_pdf_bytes(
-            invoice=invoice,
-            items=items,
-            org=org,
-            settings=b_settings,
-            customer=customer,
-            payments=payments,
-        )
-    except Exception as e:
-        logger.exception("Failed to generate PDF for WhatsApp: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"PDF બનાવવામાં સમસ્યા આવી: {str(e)}",
-        )
-
-    filename = f"Invoice-{invoice.invoice_number}.pdf"
     clean_phone = whatsapp_client.clean_phone_number(payload.phone)
+
+    # ⚡ જો Meta Cloud API કન્ફિગર હોય તો Celery Worker કતારમાં મોકલો (સુપરફાસ્ટ રિસ્પોન્સ)
+    if whatsapp_client.is_configured:
+        try:
+            send_invoice_whatsapp_task.delay(str(invoice.id), clean_phone, str(org_id))
+            return WhatsAppSendResponse(
+                success=True,
+                status="pending",
+                message="બિલ WhatsApp પર મોકલવા માટે બેકગ્રાઉન્ડ કતારમાં મુકાઈ ગયું છે!",
+            )
+        except Exception as e:
+            logger.warning("Celery queue failed, falling back to direct chat: %s", e)
+
+    # જો Cloud API સેટ ન હોય તો ડાયરેક્ટ WhatsApp Chat લિંક બનાવો
+    org = db.get(Organization, org_id)
     org_title = org.name if org and org.name else "STORE"
     grand_total_val = float(invoice.grand_total or 0)
 
@@ -106,46 +92,9 @@ async def send_invoice_via_whatsapp(
         f"ધન્યવાદ! ફરી પધારશો."
     )
 
-    now = datetime.now(timezone.utc)
-
-    # Meta Cloud API થી મોકલવાનો પ્રયાસ કરો
-    if whatsapp_client.is_configured:
-        try:
-            media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
-            if media_id:
-                result = await whatsapp_client.send_invoice_document(
-                    clean_phone, media_id, filename, caption
-                )
-                if result.get("success"):
-                    wamid = result.get("data", {}).get("messages", [{}])[0].get("id")
-
-                    # મેસેજ ટ્રેકિંગ ડેટાબેઝમાં નોંધો
-                    msg_record = WhatsAppMessage(
-                        organization_id=org_id,
-                        invoice_id=invoice.id,
-                        recipient_phone=clean_phone,
-                        message_type="invoice_pdf",
-                        whatsapp_message_id=wamid,
-                        status="sent",
-                        sent_at=now,
-                    )
-                    db.add(msg_record)
-                    db.commit()
-
-                    return WhatsAppSendResponse(
-                        success=True,
-                        status="sent",
-                        message="સત્તાવાર WhatsApp API દ્વારા ગ્રાહકને PDF બિલ મોકલાઈ ગયું છે!",
-                        message_id=wamid,
-                    )
-        except Exception as e:
-            logger.warning("WhatsApp API Error, using direct chat fallback: %s", e)
-
-    # જો Cloud API ન હોય તો WhatsApp Direct Chat Fallback URL આપશે
     encoded_caption = urllib.parse.quote(caption)
     fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
 
-    # ફોલબેક રેકોર્ડ સેવ કરો
     msg_record = WhatsAppMessage(
         organization_id=org_id,
         invoice_id=invoice.id,
@@ -165,7 +114,7 @@ async def send_invoice_via_whatsapp(
 
 
 # ==============================================================================
-# ૨. CUSTOMER LEDGER STATEMENT WHATSAPP પર મોકલો
+# ૨. CUSTOMER LEDGER STATEMENT WHATSAPP પર મોકલો (CELERY ASYNC)
 # ==============================================================================
 @router.post("/customers/{customer_id}/send-statement", response_model=WhatsAppSendResponse)
 async def send_customer_ledger_via_whatsapp(
@@ -185,79 +134,31 @@ async def send_customer_ledger_via_whatsapp(
     if not phone:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "આ ગ્રાહકનો મોબાઈલ નંબર નોંધાયેલો નથી.")
 
-    # ખાતાવહી એન્ટ્રીઓ લાવો અને રનિંગ બેલેન્સ ગણો
-    entries = db.scalars(
-        select(CustomerLedger)
-        .where(CustomerLedger.organization_id == org_id, CustomerLedger.customer_id == customer.id)
-        .order_by(CustomerLedger.created_at, CustomerLedger.id)
-    ).all()
+    clean_phone = whatsapp_client.clean_phone_number(phone)
 
-    bal = customer.opening_balance
-    rows = []
-    for e in entries:
-        bal = bal + e.debit - e.credit
-        e.balance = bal  # PDF ડિસ્પ્લે માટે
-        rows.append(e)
+    # ⚡ Celery Background Task માં કતાર કરો
+    if whatsapp_client.is_configured:
+        try:
+            send_ledger_whatsapp_task.delay(str(customer.id), clean_phone, str(org_id))
+            return WhatsAppSendResponse(
+                success=True,
+                status="pending",
+                message="ખાતાવહી સ્ટેટમેન્ટ PDF બેકગ્રાઉન્ડમાં તૈયાર થઈને WhatsApp પર મોકલાઈ રહ્યું છે!",
+            )
+        except Exception as e:
+            logger.warning("Celery queue failed: %s", e)
 
+    # Fallback Direct WhatsApp Chat
     current_due = outstanding(db, org_id, customer)
     org = db.get(Organization, org_id)
-    b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
-
-    try:
-        pdf_bytes = generate_customer_ledger_pdf_bytes(
-            customer=customer,
-            ledger_rows=rows,
-            opening_balance=customer.opening_balance,
-            outstanding_balance=current_due,
-            org=org,
-            settings=b_settings,
-        )
-    except Exception as e:
-        logger.exception("Failed to generate ledger PDF: %s", e)
-        raise HTTPException(status_code=500, detail=f"PDF બનાવવામાં સમસ્યા આવી: {str(e)}")
-
-    filename = f"Statement-{customer.name.replace(' ', '_')}.pdf"
-    clean_phone = whatsapp_client.clean_phone_number(phone)
     org_title = org.name if org and org.name else "STORE"
 
     caption = (
         f"નમસ્તે {customer.name} જી!\n"
-        f"*{org_title}* તરફથી તમારી ખાતાવહીનું સ્ટેટમેન્ટ (Ledger Statement):\n"
+        f"*{org_title}* તરફથી તમારી ખાતાવહીનું સ્ટેટમેન્ટ:\n"
         f"💰 કુલ બાકી ઉધારી: *₹{float(current_due):.2f}*\n"
-        f"કૃપા કરીને જોડાયેલ PDF ફાઇલ ચકાસી લેશો. આભાર!"
+        f"કૃપા કરીને આ રકમ ચૂકવવા વિનંતી. આભાર!"
     )
-
-    now = datetime.now(timezone.utc)
-
-    # Cloud API થી મોકલવાનો પ્રયાસ કરો
-    if whatsapp_client.is_configured:
-        try:
-            media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
-            if media_id:
-                result = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
-                if result.get("success"):
-                    wamid = result.get("data", {}).get("messages", [{}])[0].get("id")
-                    msg_record = WhatsAppMessage(
-                        organization_id=org_id,
-                        recipient_phone=clean_phone,
-                        message_type="ledger_statement",
-                        whatsapp_message_id=wamid,
-                        status="sent",
-                        sent_at=now,
-                    )
-                    db.add(msg_record)
-                    db.commit()
-
-                    return WhatsAppSendResponse(
-                        success=True,
-                        status="sent",
-                        message="ગ્રાહકને ખાતાવહી સ્ટેટમેન્ટ WhatsApp પર મોકલાઈ ગયું છે!",
-                        message_id=wamid,
-                    )
-        except Exception as e:
-            logger.warning("WhatsApp API Error, using chat fallback: %s", e)
-
-    # Fallback Direct WhatsApp Chat
     encoded_caption = urllib.parse.quote(caption)
     fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
 
@@ -366,7 +267,7 @@ async def send_customer_payment_reminder(
 
 
 # ==============================================================================
-# ૪. CUSTOMER STATEMENT PDF ડાઉનલોડ ENDPOINT (વેબ / મોબાઇલ માટે)
+# ૪. CUSTOMER STATEMENT PDF ડાઉનલોડ ENDPOINT
 # ==============================================================================
 @router.get("/customers/{customer_id}/download-ledger-pdf")
 def download_customer_ledger_pdf(
@@ -433,7 +334,6 @@ async def verify_webhook(
     hub_challenge: str = Query(None, alias="hub.challenge"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
 ):
-    """Meta Developer Console માં Webhook સેટ કરતી વખતે વેરિફિકેશન કરે છે."""
     expected_token = getattr(settings, "whatsapp_verify_token", "volonce_wa_verify_2026")
 
     if hub_mode == "subscribe" and hub_verify_token == expected_token:
@@ -452,7 +352,6 @@ async def receive_whatsapp_status(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Meta Cloud API તરફથી આવતા Sent, Delivered, Read અને Failed સ્ટેટસ સાંભળીને લાઈવ અપડેટ કરે છે."""
     try:
         body = await request.json()
     except Exception:
@@ -469,7 +368,7 @@ async def receive_whatsapp_status(
 
             for s in statuses:
                 wamid = s.get("id")
-                new_status = s.get("status")  # sent, delivered, read, failed
+                new_status = s.get("status")
 
                 if not wamid or not new_status:
                     continue
@@ -506,7 +405,6 @@ def get_invoice_whatsapp_status(
     user: User = Depends(can_write),
     db: Session = Depends(get_db),
 ):
-    """આ બિલ WhatsApp પર પહોંચ્યું કે નહીં (Sent, Delivered, Read) તે ચેક કરે છે."""
     records = db.scalars(
         select(WhatsAppMessage)
         .where(
