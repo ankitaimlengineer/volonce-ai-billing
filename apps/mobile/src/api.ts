@@ -70,6 +70,35 @@ export type Customer = {
   current_balance?: number | string;
 };
 
+// કસ્ટમર ખાતાવહી (Ledger) મોડેલ્સ
+export type CustomerLedgerRow = {
+  id: string;
+  created_at: string;
+  entry_type: "sale" | "payment" | "sales_return" | "adjustment";
+  debit: number | string;
+  credit: number | string;
+  balance: number | string;
+  note: string | null;
+};
+
+export type CustomerLedgerOut = {
+  customer_id: string;
+  opening_balance: number | string;
+  outstanding: number | string;
+  items: CustomerLedgerRow[];
+};
+
+// ખર્ચા (Expense) મોડેલ
+export type ExpenseItem = {
+  id: string;
+  category: string;
+  amount: number | string;
+  expense_date: string;
+  payment_method: string;
+  notes: string | null;
+  status: string;
+};
+
 // બિલ આઇટમ્સ અને પેમેન્ટ મોડેલ્સ
 export type InvoiceItemPayload = {
   product_id: string;
@@ -240,6 +269,56 @@ export const getProducts = () =>
 export const getCustomers = () =>
   authRequest<{ items: Customer[] } | Customer[]>("GET", "/api/v1/customers?page_size=100");
 
+// ૧. નવો ગ્રાહક ઉમેરો
+export const createCustomer = (data: {
+  name: string;
+  mobile?: string;
+  customer_type?: string;
+  opening_balance?: string;
+}) => authRequest<Customer>("POST", "/api/v1/customers", data);
+
+// ૨. ગ્રાહકની સંપૂર્ણ ખાતાવહી (Ledger) લાવો
+export const getCustomerLedger = (customerId: string) =>
+  authRequest<CustomerLedgerOut>("GET", `/api/v1/customers/${customerId}/ledger`);
+
+// ૩. ગ્રાહક પાસેથી ઉધાર/જમા પેમેન્ટ મેળવો
+export const recordCustomerPayment = (
+  customerId: string,
+  amount: number,
+  method: "cash" | "upi" | "card" | "bank_transfer",
+  note?: string
+) => {
+  const idempotencyKey = "pay-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 7);
+  return authRequest<any>(
+    "POST",
+    `/api/v1/customers/${customerId}/payments`,
+    {
+      amount,
+      payment_method: method,
+      note: note || null,
+    },
+    { "Idempotency-Key": idempotencyKey }
+  );
+};
+
+// ૪. દુકાનના ખર્ચાની યાદી
+export const getExpenses = () =>
+  authRequest<{ items: ExpenseItem[]; total_amount: number | string }>("GET", "/api/v1/expenses?limit=100");
+
+// ૫. નવો ખર્ચ ઉમેરો
+export const createExpense = (data: {
+  category: string;
+  amount: number;
+  expense_date: string;
+  payment_method: string;
+  notes?: string;
+}) => {
+  const idempotencyKey = "exp-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 7);
+  return authRequest<any>("POST", "/api/v1/expenses", data, {
+    "Idempotency-Key": idempotencyKey,
+  });
+};
+
 // Create Invoice
 export const createInvoice = (payload: InvoiceCreatePayload) => {
   const idempotencyKey =
@@ -323,7 +402,7 @@ export async function matchCustomerFace(imageUri: string): Promise<CustomerFaceM
 
 // ---------------- PDF ડાઉનલોડ, સેવ, પ્રિન્ટ અને શેર ફંક્શન્સ ----------------
 
-// ૧. સર્વર પરથી PDF ડાઉનલોડ કરી કેશમાં મૂકવી
+// ૧. સર્વર પરથી PDF ડાઉનલોડ કરવી (૧૦૦% સાઇઝ અને એરર ચેકિંગ સાથે)
 export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<string> {
   const token = await getAccess();
   const fileUri = `${FileSystem.documentDirectory}Invoice-${invoiceNumber}.pdf`;
@@ -338,12 +417,31 @@ export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: strin
     }
   );
 
+  // સર્વર ભૂલ ચેક કરો (જો 500 આવે તો આગળ ન વધો)
+  if (downloadResult.status !== 200) {
+    throw new ApiError(
+      `સર્વર ભૂલ (${downloadResult.status}): PDF ડાઉનલોડ થઈ શકી નથી.`,
+      downloadResult.status
+    );
+  }
+
+  // ખાતરી કરો કે ફાઈલ સાચે જ બની છે અને 0 kB નથી
+  const info = await FileSystem.getInfoAsync(downloadResult.uri);
+  if (!info.exists || info.size === 0) {
+    throw new ApiError("સર્વર પરથી ખાલી (0 kB) PDF ડાઉનલોડ થઈ છે. બેકએન્ડ તપાસો.", 500);
+  }
+
   return downloadResult.uri;
 }
 
 // ૨. મોબાઈલના Downloads / Phone Storage માં PDF કાયમ માટે સેવ કરવી (Android SAF)
 export async function savePdfToPhone(fileUri: string, invoiceNumber: string): Promise<boolean> {
   try {
+    const info = await FileSystem.getInfoAsync(fileUri);
+    if (!info.exists || info.size === 0) {
+      throw new ApiError("PDF ફાઇલ ખાલી છે, સેવ કરી શકાતી નથી.", 0);
+    }
+
     if (Platform.OS === "android") {
       const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
       if (permissions.granted) {
@@ -379,6 +477,11 @@ export async function savePdfToPhone(fileUri: string, invoiceNumber: string): Pr
 
 // ૩. અસલ PDF ફાઇલ WhatsApp / Drive / Bluetooth પર શેર કરવી
 export async function sharePdfFile(fileUri: string): Promise<void> {
+  const info = await FileSystem.getInfoAsync(fileUri);
+  if (!info.exists || info.size === 0) {
+    throw new ApiError("PDF ફાઇલ ખાલી છે, શેર કરી શકાતી નથી.", 0);
+  }
+
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(fileUri, {
       mimeType: "application/pdf",
@@ -390,6 +493,10 @@ export async function sharePdfFile(fileUri: string): Promise<void> {
 
 // ૪. મોબાઈલમાંથી સીધા પ્રિન્ટર પર પ્રિન્ટ કરવા માટે
 export async function printInvoicePdf(fileUri: string): Promise<void> {
+  const info = await FileSystem.getInfoAsync(fileUri);
+  if (!info.exists || info.size === 0) {
+    throw new ApiError("PDF ફાઇલ ખાલી છે, પ્રિન્ટ કરી શકાતી નથી.", 0);
+  }
   await Print.printAsync({ uri: fileUri });
 }
 

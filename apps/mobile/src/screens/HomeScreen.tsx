@@ -65,7 +65,7 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
           <ActivityIndicator size="large" color={colors.primary || "#047857"} style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Quick Actions (સૌથી ઉપર મુખ્ય બટન્સ) */}
+            {/* Quick Actions (મુખ્ય કામગીરી બટન્સ) */}
             <Text style={styles.sectionTitle}>ઝડપી કામગીરી (Quick Actions)</Text>
             <View style={styles.actionRow}>
               {/* ૧. મુખ્ય ફીચર: AI કેમેરા બિલિંગ */}
@@ -83,16 +83,34 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                 onPress={() => navigation?.navigate?.("Billing")}
               >
                 <Text style={styles.actionBtnText}>+ સાદું બિલ (Manual POS)</Text>
-                <Text style={styles.actionBtnSubText}>મેન્યુઅલ પ્રોડક્ટ પસંદ કરીને</Text>
+                <Text style={styles.actionBtnSubText}>પ્રોડક્ટ પસંદ કરીને બિલ બનાવો</Text>
               </TouchableOpacity>
 
-              {/* ૩. સ્ટોક તપાસ */}
+              {/* ૩. ગ્રાહકો અને ઉધારી ખાતાવહી */}
               <TouchableOpacity
-                style={[styles.actionBtn, { backgroundColor: "#475569" }]}
-                onPress={() => navigation?.navigate?.("Products")}
+                style={[styles.actionBtn, { backgroundColor: "#0F172A" }]}
+                onPress={() => navigation?.navigate?.("Customers")}
               >
-                <Text style={styles.actionBtnText}>📦 સ્ટોક તપાસો (Products)</Text>
+                <Text style={styles.actionBtnText}>👤 ગ્રાહકો અને ઉધારી (Khata)</Text>
+                <Text style={styles.actionBtnSubText}>ખાતાવહી જુઓ અને પેમેન્ટ જમા કરો</Text>
               </TouchableOpacity>
+
+              {/* ૪. સ્ટોક અને ખર્ચા (બાજુ-બાજુમાં) */}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#475569" }]}
+                  onPress={() => navigation?.navigate?.("Products")}
+                >
+                  <Text style={styles.smallBtnText}>📦 સ્ટોક (Products)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#B45309" }]}
+                  onPress={() => navigation?.navigate?.("Expenses")}
+                >
+                  <Text style={styles.smallBtnText}>📝 ખર્ચા (Expenses)</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Quick Stats Grid */}
@@ -113,23 +131,31 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                 <Text style={styles.cardSub}>Margin: {summary?.margin_percent || 0}%</Text>
               </View>
 
-              {/* Receivables Card */}
-              <View style={[styles.card, { borderLeftColor: "#F59E0B" }]}>
+              {/* Receivables Card (ક્લિક કરવાથી ગ્રાહક લિસ્ટ ખુલશે) */}
+              <TouchableOpacity
+                style={[styles.card, { borderLeftColor: "#F59E0B" }]}
+                onPress={() => navigation?.navigate?.("Customers")}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.cardLabel}>ગ્રાહકો પાસેથી લેવાના (Receivable)</Text>
                 <Text style={[styles.cardValue, { color: "#D97706" }]}>
                   ₹ {Number(summary?.receivable || 0).toLocaleString("en-IN")}
                 </Text>
-                <Text style={styles.cardSub}>ઉધારી રકમ</Text>
-              </View>
+                <Text style={styles.cardSub}>ઉધારી રકમ (જુઓ →)</Text>
+              </TouchableOpacity>
 
-              {/* Payables Card */}
-              <View style={[styles.card, { borderLeftColor: "#EF4444" }]}>
-                <Text style={styles.cardLabel}>વેપારીને આપવાના (Payable)</Text>
+              {/* Expenses Card (ક્લિક કરવાથી ખર્ચા ખુલશે) */}
+              <TouchableOpacity
+                style={[styles.card, { borderLeftColor: "#EF4444" }]}
+                onPress={() => navigation?.navigate?.("Expenses")}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cardLabel}>દુકાનના ખર્ચા (Expenses)</Text>
                 <Text style={[styles.cardValue, { color: "#DC2626" }]}>
-                  ₹ {Number(summary?.payable || 0).toLocaleString("en-IN")}
+                  ₹ {Number(summary?.expenses || 0).toLocaleString("en-IN")}
                 </Text>
-                <Text style={styles.cardSub}>બાકી ચૂકવણી</Text>
-              </View>
+                <Text style={styles.cardSub}>કુલ ખર્ચ (જુઓ →)</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Inventory Alerts */}
@@ -194,6 +220,13 @@ const styles = StyleSheet.create({
   },
   actionBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
   actionBtnSubText: { color: "#F1F5F9", fontSize: 11, marginTop: 2, fontWeight: "500" },
+  smallBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  smallBtnText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",

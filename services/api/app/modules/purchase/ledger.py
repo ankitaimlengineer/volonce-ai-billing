@@ -128,6 +128,7 @@ def get_ledger(
                 note=e.note,
             )
         )
+    rows.reverse()
     return LedgerOut(
         supplier_id=s.id, opening_balance=s.opening_balance, outstanding=balance, items=rows
     )

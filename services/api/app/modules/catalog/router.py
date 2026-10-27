@@ -252,7 +252,7 @@ def list_products(
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
-        stmt.order_by(Product.name).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).all()
     return ProductList(items=items, total=total, page=page, page_size=page_size)
 

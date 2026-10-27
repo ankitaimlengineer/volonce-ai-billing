@@ -85,7 +85,7 @@ def list_customers(
         stmt = stmt.where(or_(Customer.name.ilike(like), Customer.mobile.ilike(like)))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
-        stmt.order_by(Customer.name).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(Customer.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).all()
 
     sums = {
@@ -234,6 +234,7 @@ def get_ledger(
                 note=e.note,
             )
         )
+    rows.reverse()
     return CustomerLedgerOut(
         customer_id=c.id, opening_balance=c.opening_balance, outstanding=balance, items=rows
     )

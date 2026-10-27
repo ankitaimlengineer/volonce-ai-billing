@@ -153,7 +153,7 @@ export default function AiCameraBillingScreen({ onBack, navigation }: Props) {
       return;
     }
 
-    setPhotos((prev) => [...prev, uri]);
+    setPhotos((prev) => [uri, ...prev]);
     setLoading(true);
 
     try {

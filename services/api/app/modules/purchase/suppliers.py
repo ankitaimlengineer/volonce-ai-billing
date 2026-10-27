@@ -75,7 +75,7 @@ def list_suppliers(
         )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
-        stmt.order_by(Supplier.name).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(Supplier.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).all()
 
     # One query for all suppliers on this page
