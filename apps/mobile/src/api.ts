@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as Print from "expo-print";
@@ -266,7 +267,7 @@ function uriToBlob(uri: string): Promise<Blob> {
 
 // ---------------- AI CAMERA SCANNING APIS ----------------
 
-// ૧. કેમેરા ફોટો પરથી Gemini AI સ્કેનર (Android-Safe Blob Upload)
+// ૧. કેમેરા ફોટો પરથી Gemini AI સ્કેનર
 export async function scanBillImage(imageUri: string): Promise<BillScanResponse> {
   let token = await getAccess();
   const fileBlob = await uriToBlob(imageUri);
@@ -293,7 +294,7 @@ export async function scanBillImage(imageUri: string): Promise<BillScanResponse>
   return parse<BillScanResponse>(res);
 }
 
-// ૨. ગ્રાહકનો ચહેરો ઓળખવા માટે (Android-Safe Blob Upload)
+// ૨. ગ્રાહકનો ચહેરો ઓળખવા માટે
 export async function matchCustomerFace(imageUri: string): Promise<CustomerFaceMatchResponse> {
   let token = await getAccess();
   const fileBlob = await uriToBlob(imageUri);
@@ -320,9 +321,9 @@ export async function matchCustomerFace(imageUri: string): Promise<CustomerFaceM
   return parse<CustomerFaceMatchResponse>(res);
 }
 
-// ---------------- PDF ડાઉનલોડ, પ્રિન્ટ અને શેર ફંક્શન્સ ----------------
+// ---------------- PDF ડાઉનલોડ, સેવ, પ્રિન્ટ અને શેર ફંક્શન્સ ----------------
 
-// ૧. સર્વર પરથી અસલ રંગીન PDF ડાઉનલોડ કરી ફોનમાં સેવ કરવા માટે (Using Expo Legacy API)
+// ૧. સર્વર પરથી PDF ડાઉનલોડ કરી કેશમાં મૂકવી
 export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<string> {
   const token = await getAccess();
   const fileUri = `${FileSystem.documentDirectory}Invoice-${invoiceNumber}.pdf`;
@@ -340,20 +341,61 @@ export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: strin
   return downloadResult.uri;
 }
 
-// ૨. મોબાઈલમાંથી સીધા પ્રિન્ટર પર પ્રિન્ટ કરવા માટે
-export async function printInvoicePdf(fileUri: string) {
-  await Print.printAsync({ uri: fileUri });
-}
+// ૨. મોબાઈલના Downloads / Phone Storage માં PDF કાયમ માટે સેવ કરવી (Android SAF)
+export async function savePdfToPhone(fileUri: string, invoiceNumber: string): Promise<boolean> {
+  try {
+    if (Platform.OS === "android") {
+      const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (permissions.granted) {
+        const base64 = await FileSystem.readAsStringAsync(fileUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const createdUri = await FileSystem.StorageAccessFramework.createFileAsync(
+          permissions.directoryUri,
+          `Invoice-${invoiceNumber}.pdf`,
+          "application/pdf"
+        );
+        await FileSystem.writeAsStringAsync(createdUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        return true;
+      }
+    }
+  } catch (err) {
+    console.log("Save error:", err);
+  }
 
-// ૩. ફોનમાં PDF સેવ / શેર / ડાઉનલોડ્સ ફોલ્ડરમાં મૂકવા માટે
-export async function shareOrSavePdf(fileUri: string) {
+  // જો પરમિશન ન આપે તો શેર મોડલથી સેવ કરવાનો વિકલ્પ આપશે
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(fileUri, {
       mimeType: "application/pdf",
-      dialogTitle: "Invoice PDF",
+      dialogTitle: "Save Invoice PDF",
+      UTI: "com.adobe.pdf",
+    });
+    return true;
+  }
+  return false;
+}
+
+// ૩. અસલ PDF ફાઇલ WhatsApp / Drive / Bluetooth પર શેર કરવી
+export async function sharePdfFile(fileUri: string): Promise<void> {
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(fileUri, {
+      mimeType: "application/pdf",
+      dialogTitle: "Share Invoice PDF",
       UTI: "com.adobe.pdf",
     });
   }
+}
+
+// ૪. મોબાઈલમાંથી સીધા પ્રિન્ટર પર પ્રિન્ટ કરવા માટે
+export async function printInvoicePdf(fileUri: string): Promise<void> {
+  await Print.printAsync({ uri: fileUri });
+}
+
+// ૫. જૂનો ફૉલબેક (સુસંગતતા માટે)
+export async function shareOrSavePdf(fileUri: string): Promise<void> {
+  await sharePdfFile(fileUri);
 }
 
 // ---------------- PHASE 10 & 11: MULTI-PHOTO SESSIONS ----------------

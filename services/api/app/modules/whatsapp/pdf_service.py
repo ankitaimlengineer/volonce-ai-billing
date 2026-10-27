@@ -13,7 +13,7 @@ def generate_invoice_pdf_bytes(
     settings: BusinessSettings | None,
     customer: Customer | None,
 ) -> bytes:
-    """Generates a pixel-perfect, emerald-branded PDF invoice buffer."""
+    """Generates an emerald-branded PDF invoice buffer with clean Rs. formatting."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -26,10 +26,8 @@ def generate_invoice_pdf_bytes(
     story = []
     styles = getSampleStyleSheet()
 
-    # Custom Color Scheme (Signature Emerald Green)
     primary_color = colors.HexColor("#065F46")
     secondary_color = colors.HexColor("#ECFDF5")
-    dark_text = colors.HexColor("#111827")
 
     title_style = ParagraphStyle(
         "HeaderTitle",
@@ -51,7 +49,7 @@ def generate_invoice_pdf_bytes(
     org_mobile = f"+91 {org.mobile}" if org and org.mobile else ""
     org_gst = f"GSTIN: {org.gst_number}" if org and org.gst_number else ""
 
-    # 1. Top Header Banner
+    # 1. Top Header
     header_data = [
         [
             Paragraph(f"<b>{org_name}</b>", title_style),
@@ -76,7 +74,7 @@ def generate_invoice_pdf_bytes(
     story.append(header_table)
     story.append(Spacer(1, 15))
 
-    # 2. Bill To & Payment Info Section
+    # 2. Bill To & Payment Info
     cust_name = customer.name if customer else "Walk-in Customer"
     cust_phone = f"+91 {customer.mobile}" if customer and customer.mobile else "N/A"
     cust_addr = customer.address if customer and customer.address else ""
@@ -87,7 +85,7 @@ def generate_invoice_pdf_bytes(
             Paragraph(
                 f"<b>Payment Status:</b> {'PAID' if invoice.paid_amount >= invoice.grand_total else 'DUE'}<br/>"
                 f"<b>Payment Mode:</b> Cash / UPI<br/>"
-                f"<b>Total Due:</b> ₹{max(0, invoice.grand_total - invoice.paid_amount):.2f}",
+                f"<b>Total Due:</b> Rs. {max(0, invoice.grand_total - invoice.paid_amount):.2f}",
                 styles["Normal"],
             ),
         ]
@@ -103,15 +101,15 @@ def generate_invoice_pdf_bytes(
     story.append(info_table)
     story.append(Spacer(1, 15))
 
-    # 3. Item Table
+    # 3. Items Table (Rs. formatting)
     table_rows = [
         [
             Paragraph("<b>#</b>", styles["Normal"]),
             Paragraph("<b>Item Description</b>", styles["Normal"]),
             Paragraph("<b>Qty</b>", styles["Normal"]),
-            Paragraph("<b>Rate (₹)</b>", styles["Normal"]),
+            Paragraph("<b>Rate (Rs.)</b>", styles["Normal"]),
             Paragraph("<b>Tax %</b>", styles["Normal"]),
-            Paragraph("<b>Total (₹)</b>", styles["Normal"]),
+            Paragraph("<b>Total (Rs.)</b>", styles["Normal"]),
         ]
     ]
 
@@ -139,13 +137,13 @@ def generate_invoice_pdf_bytes(
     story.append(items_table)
     story.append(Spacer(1, 15))
 
-    # 4. Totals Summary
+    # 4. Totals Summary (Rs. formatting)
     totals_data = [
-        ["Subtotal:", f"₹{invoice.subtotal:.2f}"],
-        ["Discount:", f"-₹{invoice.discount_total:.2f}"],
-        ["Tax (GST):", f"₹{invoice.tax_total:.2f}"],
-        ["Grand Total:", f"₹{invoice.grand_total:.2f}"],
-        ["Paid Amount:", f"₹{invoice.paid_amount:.2f}"],
+        ["Subtotal:", f"Rs. {invoice.subtotal:.2f}"],
+        ["Discount:", f"-Rs. {invoice.discount_total:.2f}"],
+        ["Tax (GST):", f"Rs. {invoice.tax_total:.2f}"],
+        ["Grand Total:", f"Rs. {invoice.grand_total:.2f}"],
+        ["Paid Amount:", f"Rs. {invoice.paid_amount:.2f}"],
     ]
     totals_table = Table(totals_data, colWidths=[120, 100], hAlign="RIGHT")
     totals_table.setStyle(
