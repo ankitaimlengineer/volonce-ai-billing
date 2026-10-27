@@ -1,11 +1,15 @@
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from app.models.product_variant import ProductVariant
 
 
 class Product(UUIDMixin, TimestampMixin, Base):
@@ -60,8 +64,14 @@ class Product(UUIDMixin, TimestampMixin, Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # product image key is added in step 3.5
-
-        # Product photo (private storage key, never a public URL)
+    # Product photo (private storage key, never a public URL)
     image_key: Mapped[str | None] = mapped_column(String(300))
     image_content_type: Mapped[str | None] = mapped_column(String(50))
+
+    # Product Variants Relationship (1 Product -> Multiple Variants)
+    variants: Mapped[list["ProductVariant"]] = relationship(
+        "ProductVariant",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductVariant.variant_name",
+    )

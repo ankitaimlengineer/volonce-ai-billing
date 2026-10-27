@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles, require_setup_completed
-from app.models import Category, Product, Shop, User
+from app.models import Category, Product, ProductVariant, Shop, User
 from app.modules.catalog.csv_io import build_csv, parse_csv, template_csv
 from app.schemas.catalog import (
     CategoryCreate,
@@ -16,6 +16,9 @@ from app.schemas.catalog import (
     ProductList,
     ProductOut,
     ProductUpdate,
+    ProductVariantCreate,
+    ProductVariantOut,
+    ProductVariantUpdate,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["catalog"])
@@ -51,8 +54,19 @@ def _clean(data: dict) -> dict:
     for key in ("sku", "barcode", "brand", "pack_size"):
         if isinstance(data.get(key), str):
             data[key] = data[key].strip() or None
-    data["name"] = data["name"].strip()
-    data["aliases"] = [a.strip() for a in data.get("aliases", []) if a.strip()]
+    if "name" in data and isinstance(data["name"], str):
+        data["name"] = data["name"].strip()
+    if "aliases" in data:
+        data["aliases"] = [a.strip() for a in data.get("aliases", []) if a.strip()]
+    return data
+
+
+def _clean_variant(data: dict) -> dict:
+    for key in ("sku", "barcode"):
+        if isinstance(data.get(key), str):
+            data[key] = data[key].strip() or None
+    if "variant_name" in data and isinstance(data["variant_name"], str):
+        data["variant_name"] = data["variant_name"].strip()
     return data
 
 
@@ -64,7 +78,9 @@ def _get_product(db: Session, org_id: uuid.UUID, product_id: uuid.UUID) -> Produ
     return p
 
 
-# ---------- Categories ----------
+# =========================================================================
+# ૧. CATEGORIES ENDPOINTS
+# =========================================================================
 
 @router.get("/categories", response_model=list[CategoryOut])
 def list_categories(user: User = Depends(can_read), db: Session = Depends(get_db)):
@@ -106,7 +122,9 @@ def delete_category(
     db.commit()
 
 
-# ---------- Products: CSV (must be BEFORE /products/{product_id}) ----------
+# =========================================================================
+# ૨. PRODUCTS: CSV IMPORT / EXPORT
+# =========================================================================
 
 CSV_HEADERS = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
 
@@ -198,7 +216,6 @@ async def import_products(
         select(Shop.id).where(Shop.organization_id == org_id, Shop.is_default.is_(True))
     )
 
-    # Everything below is ONE transaction: all rows are saved or none
     try:
         for r in rows:
             if r["category_name"] and r["category_id"] is None:
@@ -219,7 +236,9 @@ async def import_products(
     return {"imported": len(rows)}
 
 
-# ---------- Products ----------
+# =========================================================================
+# ૩. MAIN PRODUCTS CRUD
+# =========================================================================
 
 @router.get("/products", response_model=ProductList)
 def list_products(
@@ -264,6 +283,7 @@ def create_product(
     org_id = _org_id(user)
     values = _clean(data.model_dump())
     _check_category(db, org_id, values["category_id"])
+    variants_in = values.pop("variants", [])
 
     shop_id = db.scalar(
         select(Shop.id).where(Shop.organization_id == org_id, Shop.is_default.is_(True))
@@ -271,10 +291,21 @@ def create_product(
     product = Product(organization_id=org_id, shop_id=shop_id, created_by=user.id, **values)
     db.add(product)
     try:
+        db.flush()
+        # જો પ્રોડક્ટ સાથે સીધા વેરિઅન્ટ્સ મોકલેલા હોય તો તે પણ એક જ ટ્રાન્ઝેક્શનમાં સેવ કરો
+        for v in variants_in:
+            v_cleaned = _clean_variant(v)
+            variant = ProductVariant(
+                organization_id=org_id,
+                product_id=product.id,
+                **v_cleaned,
+            )
+            db.add(variant)
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "SKU already exists")
+        raise HTTPException(status.HTTP_409_CONFLICT, "SKU already exists in product or variants")
+    db.refresh(product)
     return product
 
 
@@ -296,6 +327,8 @@ def update_product(
     product = _get_product(db, org_id, product_id)
     values = _clean(data.model_dump())
     _check_category(db, org_id, values["category_id"])
+    values.pop("variants", None)
+
     for field, value in values.items():
         setattr(product, field, value)
     try:
@@ -303,6 +336,7 @@ def update_product(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "SKU already exists")
+    db.refresh(product)
     return product
 
 
@@ -313,4 +347,133 @@ def delete_product(
     # Soft delete: old invoices/stock history must keep pointing to this product
     product = _get_product(db, _org_id(user), product_id)
     product.is_active = False
+    db.commit()
+
+
+# =========================================================================
+# ૪. PRODUCT VARIANTS CRUD ENDPOINTS
+# =========================================================================
+
+@router.get("/products/{product_id}/variants", response_model=list[ProductVariantOut])
+def list_product_variants(
+    product_id: uuid.UUID,
+    include_inactive: bool = False,
+    user: User = Depends(can_read),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    _get_product(db, org_id, product_id)
+    stmt = select(ProductVariant).where(
+        ProductVariant.organization_id == org_id,
+        ProductVariant.product_id == product_id,
+    )
+    if not include_inactive:
+        stmt = stmt.where(ProductVariant.is_active.is_(True))
+    return db.scalars(stmt.order_by(ProductVariant.variant_name)).all()
+
+
+@router.post(
+    "/products/{product_id}/variants",
+    response_model=ProductVariantOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_product_variant(
+    product_id: uuid.UUID,
+    data: ProductVariantCreate,
+    user: User = Depends(_write_user),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    _get_product(db, org_id, product_id)
+    values = _clean_variant(data.model_dump())
+
+    variant = ProductVariant(
+        organization_id=org_id,
+        product_id=product_id,
+        **values,
+    )
+    db.add(variant)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Variant SKU already exists")
+    db.refresh(variant)
+    return variant
+
+
+@router.get("/products/{product_id}/variants/{variant_id}", response_model=ProductVariantOut)
+def get_product_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    user: User = Depends(can_read),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    _get_product(db, org_id, product_id)
+    variant = db.scalar(
+        select(ProductVariant).where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == product_id,
+            ProductVariant.organization_id == org_id,
+        )
+    )
+    if not variant:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Variant not found")
+    return variant
+
+
+@router.put("/products/{product_id}/variants/{variant_id}", response_model=ProductVariantOut)
+def update_product_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    data: ProductVariantUpdate,
+    user: User = Depends(_write_user),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    _get_product(db, org_id, product_id)
+    variant = db.scalar(
+        select(ProductVariant).where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == product_id,
+            ProductVariant.organization_id == org_id,
+        )
+    )
+    if not variant:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Variant not found")
+
+    values = _clean_variant(data.model_dump())
+    for k, v in values.items():
+        setattr(variant, k, v)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Variant SKU already exists")
+    db.refresh(variant)
+    return variant
+
+
+@router.delete("/products/{product_id}/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_product_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    user: User = Depends(_write_user),
+    db: Session = Depends(get_db),
+):
+    org_id = _org_id(user)
+    _get_product(db, org_id, product_id)
+    variant = db.scalar(
+        select(ProductVariant).where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == product_id,
+            ProductVariant.organization_id == org_id,
+        )
+    )
+    if not variant:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Variant not found")
+
+    variant.is_active = False  # Soft delete
     db.commit()
