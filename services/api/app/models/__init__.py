@@ -22,6 +22,7 @@ from app.models.subscription import OrganizationSubscription, SubscriptionPlan
 from app.models.supplier import Supplier
 from app.models.supplier_ledger import SupplierLedger
 from app.models.user import User
+from app.models.whatsapp_message import WhatsAppMessage
 
 __all__ = [
     "BusinessSettings",
@@ -55,4 +56,5 @@ __all__ = [
     "AiDetection",
     "BillDraft",
     "BillDraftItem",
+    "WhatsAppMessage",
 ]
