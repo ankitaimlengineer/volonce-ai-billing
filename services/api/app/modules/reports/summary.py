@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,7 +24,7 @@ from app.models import (
     SupplierLedger,
     User,
 )
-from app.schemas.report import Summary
+from app.schemas.report import DailyTrendPoint, PaymentMethodPoint, Summary
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
 can_read = require_roles("owner", "manager", "accountant")
@@ -211,6 +211,114 @@ def compute_summary(db: Session, org_id: uuid.UUID, d1: date, d2: date) -> Summa
 
     margin = (gross_profit / (net_of_tax - ret_net) * 100) if (net_of_tax - ret_net) > 0 else ZERO
 
+    # =========================================================================
+    # 📈 પગલું ૩: Recharts ચાર્ટ્સ માટેનો દૈનિક ટ્રેન્ડ ડેટા (Daily Trends)
+    # =========================================================================
+    daily_sales = dict(
+        db.execute(
+            select(
+                Invoice.invoice_date,
+                func.coalesce(func.sum(Invoice.grand_total), 0),
+            )
+            .where(
+                Invoice.organization_id == org_id,
+                Invoice.status == "confirmed",
+                Invoice.invoice_date.between(d1, d2),
+            )
+            .group_by(Invoice.invoice_date)
+        ).all()
+    )
+
+    daily_collections = dict(
+        db.execute(
+            select(
+                Invoice.invoice_date,
+                func.coalesce(func.sum(InvoicePayment.amount), 0),
+            )
+            .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+            .where(
+                InvoicePayment.organization_id == org_id,
+                Invoice.invoice_date.between(d1, d2),
+            )
+            .group_by(Invoice.invoice_date)
+        ).all()
+    )
+
+    daily_expenses = dict(
+        db.execute(
+            select(
+                Expense.expense_date,
+                func.coalesce(func.sum(Expense.amount), 0),
+            )
+            .where(
+                Expense.organization_id == org_id,
+                Expense.status == "active",
+                Expense.expense_date.between(d1, d2),
+            )
+            .group_by(Expense.expense_date)
+        ).all()
+    )
+
+    daily_cogs = dict(
+        db.execute(
+            select(
+                Invoice.invoice_date,
+                func.coalesce(func.sum(InvoiceItem.quantity * InvoiceItem.purchase_price), 0),
+            )
+            .join(Invoice, Invoice.id == InvoiceItem.invoice_id)
+            .where(
+                Invoice.organization_id == org_id,
+                Invoice.status == "confirmed",
+                Invoice.invoice_date.between(d1, d2),
+            )
+            .group_by(Invoice.invoice_date)
+        ).all()
+    )
+
+    trend_points: list[DailyTrendPoint] = []
+    curr = d1
+    while curr <= d2:
+        s_val = _d(daily_sales.get(curr, 0))
+        col_val = _d(daily_collections.get(curr, 0))
+        exp_val = _d(daily_expenses.get(curr, 0))
+        cogs_val = _d(daily_cogs.get(curr, 0))
+        prof_val = s_val - cogs_val - exp_val
+
+        trend_points.append(
+            DailyTrendPoint(
+                date=curr.strftime("%d %b"),
+                sales=s_val.quantize(CENT),
+                collections=col_val.quantize(CENT),
+                expenses=exp_val.quantize(CENT),
+                profit=prof_val.quantize(CENT),
+            )
+        )
+        curr += timedelta(days=1)
+
+    # =========================================================================
+    # 💳 પેમેન્ટ પદ્ધતિઓનું વિતરણ (Payment Breakdown)
+    # =========================================================================
+    pay_modes = db.execute(
+        select(
+            InvoicePayment.method,
+            func.coalesce(func.sum(InvoicePayment.amount), 0),
+        )
+        .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+        .where(
+            InvoicePayment.organization_id == org_id,
+            Invoice.invoice_date.between(d1, d2),
+        )
+        .group_by(InvoicePayment.method)
+    ).all()
+
+    pay_breakdown = [
+        PaymentMethodPoint(
+            method=str(m).upper(),
+            amount=_d(amt).quantize(CENT),
+        )
+        for m, amt in pay_modes
+    ]
+
     return Summary(
         date_from=d1.isoformat(),
         date_to=d2.isoformat(),
@@ -228,6 +336,8 @@ def compute_summary(db: Session, org_id: uuid.UUID, d1: date, d2: date) -> Summa
         stock_value=stock_value.quantize(CENT),
         low_stock=low,
         out_of_stock=out,
+        daily_trend=trend_points,
+        payment_breakdown=pay_breakdown,
     )
 
 

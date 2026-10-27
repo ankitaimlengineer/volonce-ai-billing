@@ -5,6 +5,20 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, authGet, clearTokens } from "@/lib/api";
 import NotificationBell from "@/app/components/NotificationBell";
+import DashboardCharts from "./DashboardCharts";
+
+type DailyTrendPoint = {
+  date: string;
+  sales: number | string;
+  collections: number | string;
+  expenses: number | string;
+  profit: number | string;
+};
+
+type PaymentMethodPoint = {
+  method: string;
+  amount: number | string;
+};
 
 type Summary = {
   date_from: string;
@@ -23,6 +37,8 @@ type Summary = {
   stock_value: string;
   low_stock: number;
   out_of_stock: number;
+  daily_trend?: DailyTrendPoint[];
+  payment_breakdown?: PaymentMethodPoint[];
 };
 
 type Range = { from: string; to: string } | null; // null = today (server default)
@@ -258,6 +274,14 @@ export default function DashboardPage() {
                 tone={profitTone(data.net_profit)}
               />
               <Card title="માલની પડતર (COGS)" value={money(data.cogs)} />
+            </div>
+
+            {/* 📈 પગલું ૩: Recharts Graphical Charts Section */}
+            <div className="mt-7">
+              <DashboardCharts
+                trendData={data.daily_trend || []}
+                paymentData={data.payment_breakdown || []}
+              />
             </div>
 
             {/* Outstanding & Inventory Stock Status */}
