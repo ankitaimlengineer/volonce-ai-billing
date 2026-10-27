@@ -10,23 +10,29 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getDashboardSummary, DashboardSummary, Me } from "../api";
+import { getOfflineDrafts } from "../offline";
 import { colors } from "../theme";
 
 interface HomeScreenProps {
   user: Me | null;
   onLogout: () => void;
-  navigation?: any;
+  navigation: any;
 }
 
 export default function HomeScreen({ user, onLogout, navigation }: HomeScreenProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [offlineCount, setOfflineCount] = useState(0);
 
   const fetchSummary = async () => {
     try {
-      const data = await getDashboardSummary();
+      const [data, drafts] = await Promise.all([
+        getDashboardSummary(),
+        getOfflineDrafts(),
+      ]);
       setSummary(data);
+      setOfflineCount(drafts.length);
     } catch (err) {
       console.log("Summary fetch error:", err);
     } finally {
@@ -61,6 +67,19 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        {/* Offline Draft Alert Badge */}
+        {offlineCount > 0 && (
+          <TouchableOpacity
+            style={styles.offlineBanner}
+            onPress={() => navigation?.navigate?.("OfflineDrafts")}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.offlineBannerText}>
+              📶 {offlineCount} ઑફલાઇન બિલો સિંક કરવાના બાકી છે! (અહીં ક્લિક કરો →)
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {loading ? (
           <ActivityIndicator size="large" color={colors.primary || "#047857"} style={{ marginTop: 40 }} />
         ) : (
@@ -95,7 +114,24 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                 <Text style={styles.actionBtnSubText}>ખાતાવહી જુઓ અને પેમેન્ટ જમા કરો</Text>
               </TouchableOpacity>
 
-              {/* ૪. સ્ટોક અને ખર્ચા (બાજુ-બાજુમાં) */}
+              {/* ૪. વેપારીઓ અને ખરીદી */}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#0284C7" }]}
+                  onPress={() => navigation?.navigate?.("Purchases")}
+                >
+                  <Text style={styles.smallBtnText}>🛒 ખરીદી (Purchase)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#7C3AED" }]}
+                  onPress={() => navigation?.navigate?.("Suppliers")}
+                >
+                  <Text style={styles.smallBtnText}>🏢 વેપારીઓ (Suppliers)</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* ૫. સ્ટોક અને ખર્ચા */}
               <View style={{ flexDirection: "row", gap: 10 }}>
                 <TouchableOpacity
                   style={[styles.smallBtn, { backgroundColor: "#475569" }]}
@@ -131,30 +167,30 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                 <Text style={styles.cardSub}>Margin: {summary?.margin_percent || 0}%</Text>
               </View>
 
-              {/* Receivables Card (ક્લિક કરવાથી ગ્રાહક લિસ્ટ ખુલશે) */}
+              {/* Receivables Card */}
               <TouchableOpacity
                 style={[styles.card, { borderLeftColor: "#F59E0B" }]}
                 onPress={() => navigation?.navigate?.("Customers")}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cardLabel}>ગ્રાહકો પાસેથી લેવાના (Receivable)</Text>
+                <Text style={styles.cardLabel}>ગ્રાહકો પાસેથી લેવાના</Text>
                 <Text style={[styles.cardValue, { color: "#D97706" }]}>
                   ₹ {Number(summary?.receivable || 0).toLocaleString("en-IN")}
                 </Text>
                 <Text style={styles.cardSub}>ઉધારી રકમ (જુઓ →)</Text>
               </TouchableOpacity>
 
-              {/* Expenses Card (ક્લિક કરવાથી ખર્ચા ખુલશે) */}
+              {/* Payables Card */}
               <TouchableOpacity
                 style={[styles.card, { borderLeftColor: "#EF4444" }]}
-                onPress={() => navigation?.navigate?.("Expenses")}
+                onPress={() => navigation?.navigate?.("Suppliers")}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cardLabel}>દુકાનના ખર્ચા (Expenses)</Text>
+                <Text style={styles.cardLabel}>વેપારીઓને આપવાના</Text>
                 <Text style={[styles.cardValue, { color: "#DC2626" }]}>
-                  ₹ {Number(summary?.expenses || 0).toLocaleString("en-IN")}
+                  ₹ {Number(summary?.payable || 0).toLocaleString("en-IN")}
                 </Text>
-                <Text style={styles.cardSub}>કુલ ખર્ચ (જુઓ →)</Text>
+                <Text style={styles.cardSub}>દેવું રકમ (જુઓ →)</Text>
               </TouchableOpacity>
             </View>
 
@@ -199,11 +235,26 @@ const styles = StyleSheet.create({
   },
   logoutText: { color: "#EF4444", fontWeight: "600", fontSize: 12 },
   scrollContent: { padding: 16 },
+  offlineBanner: {
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+    elevation: 2,
+  },
+  offlineBannerText: {
+    color: "#92400E",
+    fontWeight: "800",
+    fontSize: 13,
+    textAlign: "center",
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
     color: "#334155",
-    marginTop: 14,
+    marginTop: 10,
     marginBottom: 10,
   },
   actionRow: { marginBottom: 10, gap: 10 },
@@ -225,8 +276,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: "center",
+    elevation: 1,
   },
-  smallBtnText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  smallBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",

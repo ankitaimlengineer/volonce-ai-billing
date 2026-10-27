@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.audit import log_activity
 from app.core.deps import (
     get_db,
     require_active_subscription,
@@ -305,7 +306,25 @@ def create_invoice(
                         created_by=user.id,
                     )
                 )
+
         db.commit()
+
+        # 🛡️ ઓડિટ લોગ: બિલ બન્યાની નોંધ લોગમાં સેવ કરો
+        log_activity(
+            db=db,
+            action="create_invoice",
+            resource_type="invoice",
+            organization_id=org_id,
+            user_id=user.id,
+            resource_id=str(inv.id),
+            details={
+                "invoice_number": inv.invoice_number,
+                "grand_total": str(inv.grand_total),
+                "items_count": len(lines),
+                "customer_id": str(customer.id) if customer else None,
+            },
+        )
+
     except IntegrityError:
         db.rollback()
         winner = _find_by_key(db, org_id, idempotency_key)

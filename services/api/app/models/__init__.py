@@ -23,6 +23,8 @@ from app.models.supplier import Supplier
 from app.models.supplier_ledger import SupplierLedger
 from app.models.user import User
 from app.models.whatsapp_message import WhatsAppMessage
+from app.models.audit_log import AuditLog
+from app.models.notification import Notification
 
 __all__ = [
     "BusinessSettings",
@@ -57,4 +59,6 @@ __all__ = [
     "BillDraft",
     "BillDraftItem",
     "WhatsAppMessage",
+    "AuditLog",
+    "Notification",
 ]

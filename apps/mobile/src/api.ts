@@ -88,6 +88,55 @@ export type CustomerLedgerOut = {
   items: CustomerLedgerRow[];
 };
 
+// વેપારી (Supplier) મોડેલ્સ
+export type Supplier = {
+  id: string;
+  name: string;
+  mobile?: string;
+  email?: string;
+  address?: string;
+  gst_number?: string;
+  opening_balance?: number | string;
+  outstanding?: number | string;
+};
+
+export type SupplierLedgerRow = {
+  id: string;
+  created_at: string;
+  entry_type: "purchase" | "payment" | "purchase_return" | "adjustment";
+  debit: number | string;
+  credit: number | string;
+  balance: number | string;
+  note: string | null;
+};
+
+export type SupplierLedgerOut = {
+  supplier_id: string;
+  opening_balance: number | string;
+  outstanding: number | string;
+  items: SupplierLedgerRow[];
+};
+
+// ખરીદી (Purchase) મોડેલ્સ
+export type PurchaseItemPayload = {
+  product_id: string;
+  quantity: number;
+  rate: number;
+  tax_percent?: number;
+  batch_no?: string;
+  expiry_date?: string;
+};
+
+export type PurchaseCreatePayload = {
+  supplier_id: string;
+  invoice_number: string;
+  purchase_date: string;
+  items: PurchaseItemPayload[];
+  paid_amount: number;
+  payment_method?: string;
+  notes?: string;
+};
+
 // ખર્ચા (Expense) મોડેલ
 export type ExpenseItem = {
   id: string;
@@ -265,7 +314,7 @@ export const getDashboardSummary = (from?: string, to?: string) => {
 export const getProducts = () =>
   authRequest<{ items: Product[] } | Product[]>("GET", "/api/v1/products?page_size=100");
 
-// Customers
+// Customers (ગ્રાહકો)
 export const getCustomers = () =>
   authRequest<{ items: Customer[] } | Customer[]>("GET", "/api/v1/customers?page_size=100");
 
@@ -301,11 +350,65 @@ export const recordCustomerPayment = (
   );
 };
 
-// ૪. દુકાનના ખર્ચાની યાદી
+// ---------------- SUPPLIERS & PURCHASES APIS ----------------
+
+// ૪. સપ્લાયર લિસ્ટ
+export const getSuppliers = () =>
+  authRequest<{ items: Supplier[] } | Supplier[]>("GET", "/api/v1/suppliers?page_size=100");
+
+// ૫. નવો સપ્લાયર ઉમેરો
+export const createSupplier = (data: {
+  name: string;
+  mobile?: string;
+  email?: string;
+  address?: string;
+  gst_number?: string;
+  opening_balance?: string;
+}) => authRequest<Supplier>("POST", "/api/v1/suppliers", data);
+
+// ૬. સપ્લાયર ખાતાવહી લાવો
+export const getSupplierLedger = (supplierId: string) =>
+  authRequest<SupplierLedgerOut>("GET", `/api/v1/suppliers/${supplierId}/ledger`);
+
+// ૭. સપ્લાયરને પેમેન્ટ ચૂકવો
+export const recordSupplierPayment = (
+  supplierId: string,
+  amount: number,
+  method: "cash" | "upi" | "card" | "bank_transfer",
+  note?: string
+) => {
+  const idempotencyKey = "spay-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 7);
+  return authRequest<any>(
+    "POST",
+    `/api/v1/suppliers/${supplierId}/payments`,
+    {
+      amount,
+      payment_method: method,
+      note: note || null,
+    },
+    { "Idempotency-Key": idempotencyKey }
+  );
+};
+
+// ૮. ખરીદી (Purchases) લિસ્ટ લાવો
+export const getPurchases = () =>
+  authRequest<any[]>("GET", "/api/v1/purchases?limit=50");
+
+// ૯. નવી ખરીદી (Stock Purchase) નોંધો
+export const createPurchase = (payload: PurchaseCreatePayload) => {
+  const idempotencyKey = "pur-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
+  return authRequest<any>("POST", "/api/v1/purchases", payload, {
+    "Idempotency-Key": idempotencyKey,
+  });
+};
+
+// ---------------- EXPENSES & BILLING APIS ----------------
+
+// ૧૦. દુકાનના ખર્ચાની યાદી
 export const getExpenses = () =>
   authRequest<{ items: ExpenseItem[]; total_amount: number | string }>("GET", "/api/v1/expenses?limit=100");
 
-// ૫. નવો ખર્ચ ઉમેરો
+// ૧૧. નવો ખર્ચ ઉમેરો
 export const createExpense = (data: {
   category: string;
   amount: number;
@@ -319,7 +422,7 @@ export const createExpense = (data: {
   });
 };
 
-// Create Invoice
+// ૧૨. નવું બિલ બનાવો (Create Invoice)
 export const createInvoice = (payload: InvoiceCreatePayload) => {
   const idempotencyKey =
     "m-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 9);
@@ -402,7 +505,7 @@ export async function matchCustomerFace(imageUri: string): Promise<CustomerFaceM
 
 // ---------------- PDF ડાઉનલોડ, સેવ, પ્રિન્ટ અને શેર ફંક્શન્સ ----------------
 
-// ૧. સર્વર પરથી PDF ડાઉનલોડ કરવી (૧૦૦% સાઇઝ અને એરર ચેકિંગ સાથે)
+// ૧. સર્વર પરથી PDF ડાઉનલોડ કરવી
 export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<string> {
   const token = await getAccess();
   const fileUri = `${FileSystem.documentDirectory}Invoice-${invoiceNumber}.pdf`;
@@ -417,7 +520,6 @@ export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: strin
     }
   );
 
-  // સર્વર ભૂલ ચેક કરો (જો 500 આવે તો આગળ ન વધો)
   if (downloadResult.status !== 200) {
     throw new ApiError(
       `સર્વર ભૂલ (${downloadResult.status}): PDF ડાઉનલોડ થઈ શકી નથી.`,
@@ -425,7 +527,6 @@ export async function downloadInvoicePdf(invoiceId: string, invoiceNumber: strin
     );
   }
 
-  // ખાતરી કરો કે ફાઈલ સાચે જ બની છે અને 0 kB નથી
   const info = await FileSystem.getInfoAsync(downloadResult.uri);
   if (!info.exists || info.size === 0) {
     throw new ApiError("સર્વર પરથી ખાલી (0 kB) PDF ડાઉનલોડ થઈ છે. બેકએન્ડ તપાસો.", 500);
@@ -463,7 +564,6 @@ export async function savePdfToPhone(fileUri: string, invoiceNumber: string): Pr
     console.log("Save error:", err);
   }
 
-  // જો પરમિશન ન આપે તો શેર મોડલથી સેવ કરવાનો વિકલ્પ આપશે
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(fileUri, {
       mimeType: "application/pdf",
@@ -500,7 +600,7 @@ export async function printInvoicePdf(fileUri: string): Promise<void> {
   await Print.printAsync({ uri: fileUri });
 }
 
-// ૫. જૂનો ફૉલબેક (સુસંગતતા માટે)
+// ૫. જૂનો ફૉલબેક
 export async function shareOrSavePdf(fileUri: string): Promise<void> {
   await sharePdfFile(fileUri);
 }

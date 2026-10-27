@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.audit import log_activity
 from app.core.config import settings
 from app.core.deps import get_current_user, get_db
 from app.core.security import (
@@ -51,7 +52,11 @@ def _issue_tokens(db: Session, user: User, setup_completed: bool) -> TokenRespon
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
+def register(
+    data: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     email = data.email.lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
@@ -83,17 +88,47 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
+    # 🛡️ ઓડિટ લોગ: નવું રજીસ્ટ્રેશન નોંધો
+    client_ip = request.client.host if request.client else None
+    log_activity(
+        db=db,
+        action="user_register",
+        resource_type="user",
+        organization_id=org.id,
+        user_id=user.id,
+        resource_id=str(user.id),
+        details={"email": user.email, "business_name": org.name},
+        ip_address=client_ip,
+    )
+
     return _issue_tokens(db, user, org.setup_completed)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    data: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     user = db.scalar(select(User).where(User.email == data.email.lower()))
     # Same error for wrong email or wrong password (no user enumeration)
     if user is None or not verify_password(data.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account disabled")
+
+    # 🛡️ ઓડિટ લોગ: સફળ લોગિન નોંધો
+    client_ip = request.client.host if request.client else None
+    log_activity(
+        db=db,
+        action="user_login",
+        resource_type="user",
+        organization_id=user.organization_id,
+        user_id=user.id,
+        resource_id=str(user.id),
+        details={"email": user.email, "role": user.role},
+        ip_address=client_ip,
+    )
 
     org = db.get(Organization, user.organization_id) if user.organization_id else None
     return _issue_tokens(db, user, org.setup_completed if org else False)
@@ -121,13 +156,28 @@ def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(data: RefreshRequest, db: Session = Depends(get_db)):
+def logout(
+    data: RefreshRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     record = db.scalar(
         select(RefreshToken).where(RefreshToken.token_hash == hash_token(data.refresh_token))
     )
     if record is not None and record.revoked_at is None:
         record.revoked_at = datetime.now(timezone.utc)
         db.commit()
+
+        # 🛡️ ઓડિટ લોગ: લોગઆઉટ નોંધો
+        client_ip = request.client.host if request.client else None
+        log_activity(
+            db=db,
+            action="user_logout",
+            resource_type="user",
+            user_id=record.user_id,
+            resource_id=str(record.user_id),
+            ip_address=client_ip,
+        )
 
 
 @router.get("/me", response_model=MeResponse)

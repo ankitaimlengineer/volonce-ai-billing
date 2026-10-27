@@ -46,7 +46,7 @@ function numberToWordsINR(num: number): string {
   ];
   const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 
-  function inWords(n: int | number): string {
+  function inWords(n: number): string {
     if (n === 0) return "";
     if (n < 20) return a[n] + " ";
     if (n < 100) return b[Math.floor(n / 10)] + " " + a[n % 10] + " ";

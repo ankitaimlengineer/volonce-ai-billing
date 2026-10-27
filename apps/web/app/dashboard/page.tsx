@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, authGet, clearTokens } from "@/lib/api";
+import NotificationBell from "@/app/components/NotificationBell";
 
 type Summary = {
   date_from: string;
@@ -61,7 +62,17 @@ const PRESETS: [Preset, string][] = [
   ["custom", "Custom (તારીખ પસંદ કરો)"],
 ];
 
-function Card({ title, value, tone, sub }: { title: string; value: string; tone?: string; sub?: string }) {
+function Card({
+  title,
+  value,
+  tone,
+  sub,
+}: {
+  title: string;
+  value: string;
+  tone?: string;
+  sub?: string;
+}) {
   return (
     <div className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold text-gray-500">{title}</p>
@@ -137,7 +148,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
-        {/* Top Header with AI Counter & New Bill Buttons */}
+        {/* Top Header with Notification Bell, AI Counter & New Bill Buttons */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200/80 pb-4">
           <div>
             <h1 className="text-2xl font-black text-emerald-950">Dashboard (ડેશબોર્ડ)</h1>
@@ -145,7 +156,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* નવું સ્માર્ટ AI કાઉન્ટર બટન */}
+            {/* 🔔 Live Notification Bell */}
+            <NotificationBell />
+
+            {/* સ્માર્ટ AI કાઉન્ટર બટન */}
             <Link
               href="/billing/ai-counter"
               className="flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2.5 text-sm font-black text-white shadow-lg hover:bg-emerald-900 transition"
@@ -175,22 +189,36 @@ export default function DashboardPage() {
           <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 border border-emerald-100 shadow-sm">
             <label className="text-xs font-bold text-gray-700">
               ક્યારથી (From)
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900" />
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900"
+              />
             </label>
             <label className="text-xs font-bold text-gray-700">
               ક્યાં સુધી (To)
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900" />
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="mt-1 block rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900"
+              />
             </label>
-            <button onClick={applyCustom}
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-800">
+            <button
+              onClick={applyCustom}
+              className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-800"
+            >
               બતાવો (Show)
             </button>
           </div>
         )}
 
-        {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700 border border-red-200">{error}</p>}
+        {error && (
+          <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700 border border-red-200">
+            {error}
+          </p>
+        )}
 
         {data && (
           <>
@@ -200,14 +228,35 @@ export default function DashboardPage() {
 
             {/* Overview Metrics Cards */}
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Card title="આજનું વેચાણ (Sales)" value={money(data.sales)} tone="text-emerald-800" sub={`${data.bills} બિલો બન્યા`} />
+              <Card
+                title="આજનું વેચાણ (Sales)"
+                value={money(data.sales)}
+                tone="text-emerald-800"
+                sub={`${data.bills} બિલો બન્યા`}
+              />
               <Card title="કુલ બિલો (Bills)" value={String(data.bills)} />
-              <Card title="રોકડ વસૂલાત (Collections)" value={money(data.collections)} tone="text-emerald-700" />
+              <Card
+                title="રોકડ વસૂલાત (Collections)"
+                value={money(data.collections)}
+                tone="text-emerald-700"
+              />
               <Card title="માલની ખરીદી (Purchases)" value={money(data.purchases)} />
-              <Card title="કુલ નફો (Gross Profit)" value={money(data.gross_profit)}
-                tone={profitTone(data.gross_profit)} sub={`માર્જિન: ${data.margin_percent}%`} />
-              <Card title="દુકાનના ખર્ચા (Expenses)" value={money(data.expenses)} tone="text-amber-700" />
-              <Card title="ચોખ્ખો નફો (Net Profit)" value={money(data.net_profit)} tone={profitTone(data.net_profit)} />
+              <Card
+                title="કુલ નફો (Gross Profit)"
+                value={money(data.gross_profit)}
+                tone={profitTone(data.gross_profit)}
+                sub={`માર્જિન: ${data.margin_percent}%`}
+              />
+              <Card
+                title="દુકાનના ખર્ચા (Expenses)"
+                value={money(data.expenses)}
+                tone="text-amber-700"
+              />
+              <Card
+                title="ચોખ્ખો નફો (Net Profit)"
+                value={money(data.net_profit)}
+                tone={profitTone(data.net_profit)}
+              />
               <Card title="માલની પડતર (COGS)" value={money(data.cogs)} />
             </div>
 
@@ -216,11 +265,38 @@ export default function DashboardPage() {
               હાલની સ્થિતિ (Current Live Status)
             </h2>
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Card title="ગ્રાહકો પાસેથી લેવાના (Receivable / ઉધારી)" value={money(data.receivable)} tone="text-emerald-800" sub="કુલ ઉધાર રકમ" />
-              <Card title="વેપારીઓને આપવાના (Payable)" value={money(data.payable)} tone="text-amber-800" sub="બાકી ચૂકવણી" />
-              <Card title="દુકાનમાં સ્ટોક કિંમત (Stock Value)" value={money(data.stock_value)} tone="text-slate-900" />
-              <Card title="ઓછો / ખલાસ સ્ટોક (Stock Alert)" value={`${data.low_stock} / ${data.out_of_stock}`}
-                tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"} sub="ધ્યાન આપવાની જરૂર" />
+              <Link href="/customers" className="block">
+                <Card
+                  title="ગ્રાહકો પાસેથી લેવાના (Receivable)"
+                  value={money(data.receivable)}
+                  tone="text-emerald-800"
+                  sub="ઉધારી રકમ (જુઓ →)"
+                />
+              </Link>
+              <Link href="/suppliers" className="block">
+                <Card
+                  title="વેપારીઓને આપવાના (Payable)"
+                  value={money(data.payable)}
+                  tone="text-amber-800"
+                  sub="બાકી ચૂકવણી (જુઓ →)"
+                />
+              </Link>
+              <Link href="/stock" className="block">
+                <Card
+                  title="દુકાનમાં સ્ટોક કિંમત (Stock Value)"
+                  value={money(data.stock_value)}
+                  tone="text-slate-900"
+                  sub="કુલ માલ કિંમત"
+                />
+              </Link>
+              <Link href="/stock" className="block">
+                <Card
+                  title="ઓછો / ખલાસ સ્ટોક (Stock Alert)"
+                  value={`${data.low_stock} / ${data.out_of_stock}`}
+                  tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"}
+                  sub="ધ્યાન આપવાની જરૂર (જુઓ →)"
+                />
+              </Link>
             </div>
           </>
         )}
@@ -235,6 +311,7 @@ export default function DashboardPage() {
           <Link href="/purchases" className={nav}>ખરીદી (Purchases)</Link>
           <Link href="/expenses" className={nav}>ખર્ચા (Expenses)</Link>
           <Link href="/reports" className={nav}>રિપોર્ટ્સ (Reports)</Link>
+          <Link href="/subscription" className={nav}>સબસ્ક્રિપ્શન (Subscription)</Link>
         </div>
       </div>
     </main>
