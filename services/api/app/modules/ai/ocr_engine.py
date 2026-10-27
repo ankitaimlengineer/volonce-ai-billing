@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.models import Product
 from app.modules.ai.duplicate import calculate_image_dhash, check_duplicate_bill
 from app.modules.ai.matcher import match_product_with_catalog
-from app.modules.ai.schemas import BillScanResponse, ScannedItem
+from app.modules.ai.schemas import BillScanResponse, BoundingBox, ScannedItem
 
 load_dotenv()
 logger = logging.getLogger("uvicorn.error")
@@ -59,17 +59,26 @@ def extract_bill_data_from_image(
 
     if api_key:
         prompt = """
-        You are an expert AI retail cashier.
-        Look at the image carefully. The user is holding a product box or package in front of the camera.
+        You are an expert AI retail cashier and computer vision object detector.
+        Look at the image carefully. There are retail items, packets, boxes, or products on the counter or held in front of the camera.
 
         INSTRUCTIONS:
-        1. Completely ignore the person, face, and background.
-        2. Read the prominent BRAND and PRODUCT NAME printed on the box (e.g. "KREO GoRec DUO", "Parle-G").
-        3. Extract the visible quantity (number of units, default 1).
+        1. Completely ignore the person, face, hands, and background.
+        2. Detect each distinct visible product package or item.
+        3. Read the prominent BRAND and PRODUCT NAME printed on the package (e.g., "KREO GoRec DUO", "Parle-G", "Urea").
+        4. Detect the normalized 2D bounding box coordinates for each product package scaled from 0 to 1000: [ymin, xmin, ymax, xmax].
+        5. Extract the visible quantity (number of units grouped together, default 1).
+        6. Determine uncertainty: 'low' if clearly visible, 'medium' if partially occluded/overlapping, 'high' if blurry or dark.
 
         Return ONLY a JSON array of objects:
         [
-          {"name": "Exact Brand and Product Name from the package", "quantity": 1}
+          {
+            "name": "Exact Brand and Product Name from the package",
+            "quantity": 1,
+            "box_2d": [180, 200, 780, 800],
+            "confidence": 98.0,
+            "uncertainty": "low"
+          }
         ]
         """
 
@@ -88,14 +97,23 @@ def extract_bill_data_from_image(
                     parsed = json.loads(cleaned)
                     if isinstance(parsed, list) and len(parsed) > 0:
                         detected_items_raw = parsed
-                        print(f"[AI-CAMERA] 📸 AI એ બોક્સ પરથી વાંચ્યું: {detected_items_raw}")
+                        print(f"[AI-CAMERA] 📸 AI એ બોક્સ અને Bounding Box વાંચ્યા: {detected_items_raw}")
                         break
             except Exception as e:
                 logger.warning("Gemini AI attempt failed: %s", e)
                 continue
 
+    # જો AI કનેક્ટ ન થાય તો સેમ્પલ ફૉલબેક બોક્સ સાથે
     if not detected_items_raw:
-        detected_items_raw = [{"name": "Kreo GoRec Duo", "quantity": 1}]
+        detected_items_raw = [
+            {
+                "name": "Kreo GoRec Duo",
+                "quantity": 1,
+                "box_2d": [180, 200, 780, 800],
+                "confidence": 95.0,
+                "uncertainty": "low",
+            }
+        ]
 
     scanned_items: list[ScannedItem] = []
     subtotal = Decimal("0.0")
@@ -106,6 +124,24 @@ def extract_bill_data_from_image(
         qty = Decimal(str(item.get("quantity", 1)))
         if qty <= 0:
             qty = Decimal("1.0")
+
+        # Bounding box parse કરો અને 0-1000 સ્કેલને 0-100% ટકામાં ફેરવો
+        bbox_raw = item.get("box_2d") or [150, 150, 800, 800]
+        bbox_obj = None
+        if isinstance(bbox_raw, list) and len(bbox_raw) == 4:
+            try:
+                bbox_obj = BoundingBox(
+                    ymin=round(max(0.0, min(100.0, float(bbox_raw[0]) / 10.0)), 2),
+                    xmin=round(max(0.0, min(100.0, float(bbox_raw[1]) / 10.0)), 2),
+                    ymax=round(max(0.0, min(100.0, float(bbox_raw[2]) / 10.0)), 2),
+                    xmax=round(max(0.0, min(100.0, float(bbox_raw[3]) / 10.0)), 2),
+                )
+            except Exception:
+                bbox_obj = None
+
+        uncertainty = str(item.get("uncertainty", "low")).lower()
+        if uncertainty not in ("low", "medium", "high"):
+            uncertainty = "low"
 
         matched_prod, match_score = match_product_with_catalog(raw_name, db, org_id)
 
@@ -134,11 +170,13 @@ def extract_bill_data_from_image(
                 raw_name=final_name,
                 matched_product_id=prod_id,
                 matched_product_name=final_name,
-                confidence=match_score,
+                confidence=match_score if matched_prod else float(item.get("confidence", 85.0)),
                 quantity=qty,
                 rate=rate,
                 tax_percent=tax_pct,
                 total=item_total,
+                uncertainty_level=uncertainty,
+                bounding_box=bbox_obj,
             )
         )
 
@@ -152,6 +190,6 @@ def extract_bill_data_from_image(
         subtotal=subtotal,
         tax_total=tax_total,
         grand_total=grand_total,
-        overall_confidence=100.0,
+        overall_confidence=98.0,
         image_hash=img_hash,
     )

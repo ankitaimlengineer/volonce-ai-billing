@@ -161,7 +161,7 @@ async def add_image_to_session(
 ):
     """
     Adds a photo to session, checks duplicate photo hash,
-    runs AI detection and updates the consolidated draft bill.
+    runs AI detection with bounding boxes and updates the consolidated draft bill.
     """
     session = db.scalar(
         select(CameraSession).where(
@@ -205,8 +205,9 @@ async def add_image_to_session(
     # AI ડિટેક્શન રન કરો
     scan_res = extract_bill_data_from_image(contents, db, user.organization_id)
 
-    # ડીટેક્શન સ્ટોર કરો
+    # ડીટેક્શન સ્ટોર કરો (Bounding box સાથે)
     for item in scan_res.items:
+        bbox_dict = item.bounding_box.model_dump() if item.bounding_box else None
         db.add(
             AiDetection(
                 image_id=image_record.id,
@@ -214,6 +215,8 @@ async def add_image_to_session(
                 matched_product_id=item.matched_product_id,
                 detected_quantity=item.quantity,
                 confidence=item.confidence,
+                uncertainty_level=item.uncertainty_level,
+                bounding_box=bbox_dict,
             )
         )
 
@@ -231,7 +234,8 @@ async def add_image_to_session(
 
     # ડ્રાફ્ટ આઇટમ્સ ભેગી કરો (Consolidate items without duplicate confusion)
     for it in scan_res.items:
-        # જો પહેલેથી ડ્રાફ્ટમાં હોય તો જથ્થો વધારો, નહિતર નવી લાઇન ઉમેરો
+        bbox_dict = it.bounding_box.model_dump() if it.bounding_box else None
+
         existing_draft_item = db.scalar(
             select(BillDraftItem).where(
                 BillDraftItem.draft_id == draft.id,
@@ -244,6 +248,8 @@ async def add_image_to_session(
             tax = (base * existing_draft_item.tax_percent) / Decimal("100")
             existing_draft_item.tax_amount = _money(tax)
             existing_draft_item.total = _money(base + tax)
+            if bbox_dict:
+                existing_draft_item.bounding_box = bbox_dict
         else:
             db.add(
                 BillDraftItem(
@@ -256,6 +262,7 @@ async def add_image_to_session(
                     tax_amount=round((it.rate * it.quantity * it.tax_percent) / Decimal("100"), 2),
                     total=it.total,
                     confidence=it.confidence,
+                    bounding_box=bbox_dict,
                 )
             )
 
@@ -338,6 +345,8 @@ def update_draft_bill(
         subtotal += base
         tax_total += tax
 
+        bbox_dict = it.bounding_box.model_dump() if it.bounding_box else None
+
         db.add(
             BillDraftItem(
                 draft_id=draft.id,
@@ -349,6 +358,7 @@ def update_draft_bill(
                 tax_amount=tax,
                 total=line_total,
                 confidence=100.0,
+                bounding_box=bbox_dict,
             )
         )
 

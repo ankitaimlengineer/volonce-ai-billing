@@ -116,5 +116,6 @@ class BillDraftItem(UUIDMixin, Base):
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.0"), nullable=False)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.0"), nullable=False)
     confidence: Mapped[float] = mapped_column(default=100.0, nullable=False)
+    bounding_box: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     draft: Mapped["BillDraft"] = relationship("BillDraft", back_populates="items")

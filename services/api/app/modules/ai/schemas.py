@@ -5,6 +5,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# ---------------- ૦. BOUNDING BOX મોડેલ ----------------
+
+class BoundingBox(BaseModel):
+    """ઈમેજ પર પ્રોડક્ટનું સ્થાન (ટકામાં 0.0 થી 100.0)."""
+    ymin: float = Field(ge=0.0, le=100.0, description="Top edge percentage")
+    xmin: float = Field(ge=0.0, le=100.0, description="Left edge percentage")
+    ymax: float = Field(ge=0.0, le=100.0, description="Bottom edge percentage")
+    xmax: float = Field(ge=0.0, le=100.0, description="Right edge percentage")
+
+
 # ---------------- ૧. સિંગલ સ્કેન અને ડીટેક્શન સ્કીમાઝ ----------------
 
 class ScannedItem(BaseModel):
@@ -17,6 +27,7 @@ class ScannedItem(BaseModel):
     tax_percent: Decimal = Decimal("0.0")
     total: Decimal = Decimal("0.0")
     uncertainty_level: str = "low"  # 'low', 'medium', 'high'
+    bounding_box: BoundingBox | None = None
 
 
 class DuplicateCheckResult(BaseModel):
@@ -67,6 +78,7 @@ class DraftItemIn(BaseModel):
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     rate: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     tax_percent: Decimal = Field(default=Decimal("0.0"), ge=0, le=100, max_digits=5, decimal_places=2)
+    bounding_box: BoundingBox | None = None
 
 
 class DraftItemOut(BaseModel):
@@ -81,6 +93,7 @@ class DraftItemOut(BaseModel):
     tax_amount: Decimal
     total: Decimal
     confidence: float
+    bounding_box: dict | None = None
 
 
 class DraftBillOut(BaseModel):

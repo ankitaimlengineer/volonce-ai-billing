@@ -6,6 +6,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { authGet, authPost, authPut } from "@/lib/api";
 import WebcamCaptureModal from "@/app/components/WebcamCaptureModal";
 
+interface BoundingBox {
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+}
+
 interface DraftItem {
   id?: string;
   product_id: string | null;
@@ -16,6 +23,8 @@ interface DraftItem {
   total: number;
   confidence: number;
   isMatched: boolean;
+  uncertainty_level?: string;
+  bounding_box?: BoundingBox | null;
 }
 
 interface Product {
@@ -41,6 +50,7 @@ interface RawDraftItemResponse {
   tax_percent: string | number;
   total: string | number;
   confidence: number;
+  bounding_box?: BoundingBox | null;
 }
 
 interface DraftBillResponse {
@@ -74,7 +84,6 @@ function findBestCatalogMatch(scannedName: string, catalog: Product[]): Product 
     const cleanP = p.name.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
     const pWords = cleanP.split(/\s+/).filter((w) => w.length >= 3);
 
-    // સામાન્ય શબ્દો ગણો
     const commonCount = scannedWords.filter((w) => pWords.includes(w)).length;
     if (commonCount > maxCommonWords) {
       maxCommonWords = commonCount;
@@ -86,7 +95,6 @@ function findBestCatalogMatch(scannedName: string, catalog: Product[]): Product 
     return bestMatch;
   }
 
-  // કોઈ ખોટો Urea ફૉલબેક નહીં!
   return null;
 }
 
@@ -96,6 +104,7 @@ export default function AiReviewPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
   const [items, setItems] = useState<DraftItem[]>([]);
@@ -106,11 +115,12 @@ export default function AiReviewPage() {
   const [paymentType, setPaymentType] = useState<"cash" | "upi" | "credit" | "partial">("cash");
   const [paidAmountInput, setPaidAmountInput] = useState<string>("");
 
+  const [hoveredItemIndex, setHoveredItemIndex] = useState<number | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // ઓટોમેટિક કેલ્ક્યુલેશન અને મેચિંગ
+  // ઓટોમેટિક કેલ્ક્યુલેશન, મેચિંગ અને Bounding Box પ્રોસેસિંગ
   const processPhotoToSession = useCallback(
     async (blob: Blob, dataUrl: string, targetSessionId?: string, catalogList?: Product[]) => {
       const sId = targetSessionId || sessionId;
@@ -135,7 +145,11 @@ export default function AiReviewPage() {
         if (!res.ok) throw new Error("AI સ્કેન નિષ્ફળ ગયું");
         const data = (await res.json()) as DraftBillResponse;
 
-        setCapturedPhotos((prev) => [...prev, dataUrl]);
+        setCapturedPhotos((prev) => {
+          const updated = [...prev, dataUrl];
+          setSelectedPhotoIndex(updated.length - 1);
+          return updated;
+        });
         setDraftId(data.draft_id);
 
         const draftRes = await authGet<DraftBillResponse>(`/api/v1/ai/sessions/${sId}/draft`);
@@ -147,7 +161,7 @@ export default function AiReviewPage() {
           const qty = Number(it.quantity) || 1;
           let matchedFound = Boolean(pId && rate > 0);
 
-          // સ્માર્ટ મેચિંગ: જો બેકએન્ડમાંથી રેટ ન આવ્યો હોય તો કેટલોગમાંથી ચોક્કસ Kreo શોધો
+          // સ્માર્ટ મેચિંગ: જો બેકએન્ડમાંથી રેટ ન આવ્યો હોય તો કેટલોગમાંથી શોધો
           if (!matchedFound) {
             const matched = findBestCatalogMatch(it.name, prods);
             if (matched) {
@@ -171,6 +185,7 @@ export default function AiReviewPage() {
             total: Math.round((base + taxAmt) * 100) / 100,
             confidence: it.confidence || 98,
             isMatched: matchedFound,
+            bounding_box: it.bounding_box || null,
           };
         });
 
@@ -291,16 +306,18 @@ export default function AiReviewPage() {
     }
   };
 
+  const currentActivePhoto = capturedPhotos[selectedPhotoIndex] || capturedPhotos[0];
+
   return (
     <main className="min-h-screen bg-emerald-50/50 p-4 md:p-8">
       {/* Top Header */}
       <div className="mx-auto max-w-7xl mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-emerald-950 flex items-center gap-2">
-            ⚡ AI Smart Review (ઓટોમેટિક બિલ)
+            ⚡ AI Smart Review (ઓટોમેટિક બિલ & Bounding Box)
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            કેમેરામાંથી ઓટો-મેચ થયેલી પ્રોડક્ટ્સ, ભાવ અને રકમ
+            કેમેરામાંથી ઓટો-મેચ થયેલી પ્રોડક્ટ્સ, ભાવ અને ડિટેક્શન બોક્સ
           </p>
         </div>
 
@@ -329,12 +346,16 @@ export default function AiReviewPage() {
 
       {/* Main Grid */}
       <div className="mx-auto max-w-7xl grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Column: Photos */}
+        
+        {/* Left Column: Photos with Live Bounding Box Overlay */}
         <div className="lg:col-span-5 flex flex-col justify-between rounded-2xl bg-white p-5 shadow-sm border border-emerald-100">
           <div>
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3">
               <span className="text-xs font-black uppercase tracking-wider text-emerald-800">
                 🖼️ સ્કેન કરેલ ફોટો ({capturedPhotos.length})
+              </span>
+              <span className="text-[11px] text-gray-400 font-semibold">
+                ફોટો #{selectedPhotoIndex + 1}
               </span>
             </div>
 
@@ -347,16 +368,73 @@ export default function AiReviewPage() {
                 <p className="text-sm font-bold text-emerald-950">ફોટો પાડવા અહીં ક્લિક કરો</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 overflow-y-auto max-h-[440px] p-1">
-                {capturedPhotos.map((url, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-black shadow-sm">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={`Photo ${idx + 1}`} className="h-full w-full object-contain" />
-                    <span className="absolute bottom-1.5 left-1.5 bg-black/70 text-[10px] font-bold text-white px-2 py-0.5 rounded">
-                      #{idx + 1}
-                    </span>
+              <div>
+                {/* 🟢 Main Photo with SVG Bounding Box Overlays */}
+                <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black border border-slate-300 shadow-inner flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={currentActivePhoto}
+                    alt={`Scanned Photo ${selectedPhotoIndex + 1}`}
+                    className="h-full w-full object-contain"
+                  />
+
+                  {/* Render Bounding Boxes */}
+                  {!analyzing &&
+                    items.map((it, idx) => {
+                      if (!it.bounding_box) return null;
+                      const { ymin, xmin, ymax, xmax } = it.bounding_box;
+                      const isHovered = hoveredItemIndex === idx;
+
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            top: `${ymin}%`,
+                            left: `${xmin}%`,
+                            height: `${Math.max(8, ymax - ymin)}%`,
+                            width: `${Math.max(8, xmax - xmin)}%`,
+                          }}
+                          className={`absolute pointer-events-none rounded border-2 transition-all duration-200 ${
+                            isHovered
+                              ? "border-yellow-400 bg-yellow-400/25 ring-4 ring-yellow-400/50 scale-105 z-20"
+                              : "border-emerald-400 bg-emerald-500/15"
+                          }`}
+                        >
+                          <span
+                            className={`absolute -top-5 left-0 rounded px-1.5 py-0.5 text-[9px] font-black uppercase text-white shadow ${
+                              isHovered ? "bg-yellow-500" : "bg-emerald-700"
+                            }`}
+                          >
+                            {it.name} ({it.confidence.toFixed(0)}%)
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* Thumbnails row if multiple photos taken */}
+                {capturedPhotos.length > 1 && (
+                  <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                    {capturedPhotos.map((url, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setSelectedPhotoIndex(idx)}
+                        className={`relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg border-2 bg-black transition ${
+                          selectedPhotoIndex === idx
+                            ? "border-emerald-600 ring-2 ring-emerald-500/40 scale-105"
+                            : "border-gray-200 opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt={`Thumb ${idx + 1}`} className="h-full w-full object-cover" />
+                        <span className="absolute bottom-0 left-0 bg-black/70 px-1 text-[9px] font-bold text-white">
+                          #{idx + 1}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -375,10 +453,15 @@ export default function AiReviewPage() {
               <h3 className="text-base font-black text-gray-900">
                 🧾 ઓટો-મેચ થયેલ બિલ આઇટમ્સ ({items.length})
               </h3>
+              <span className="text-xs text-gray-400">
+                માઉસ ફેરવીને ફોટા પર પ્રોડક્ટ હાઇલાઇટ જુઓ
+              </span>
             </div>
 
             {items.length === 0 ? (
-              <p className="py-12 text-center text-xs text-gray-400">કેમેરાથી ફોટો લો એટલે બધી વસ્તુઓ આપોઆપ અહીં દેખાશે.</p>
+              <p className="py-12 text-center text-xs text-gray-400">
+                કેમેરાથી ફોટો લો એટલે બધી વસ્તુઓ આપોઆપ અહીં દેખાશે.
+              </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -392,85 +475,95 @@ export default function AiReviewPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 font-medium">
-                    {items.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/70 transition">
-                        <td className="py-3.5">
-                          <span className="font-extrabold text-gray-900 text-base block">
-                            {item.name}
-                          </span>
-                          {item.isMatched ? (
-                            <span className="inline-block mt-1 bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300">
-                              ✓ કેટલોગમાંથી આપોઆપ મેચ થયેલ
+                    {items.map((item, idx) => {
+                      const isHovered = hoveredItemIndex === idx;
+                      return (
+                        <tr
+                          key={idx}
+                          onMouseEnter={() => setHoveredItemIndex(idx)}
+                          onMouseLeave={() => setHoveredItemIndex(null)}
+                          className={`transition cursor-pointer ${
+                            isHovered ? "bg-emerald-50/80 font-bold" : "hover:bg-slate-50/70"
+                          }`}
+                        >
+                          <td className="py-3.5">
+                            <span className="font-extrabold text-gray-900 text-base block">
+                              {item.name}
                             </span>
-                          ) : (
-                            <span className="inline-block mt-1 bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-300">
-                              ⚠️ કેટલોગમાં નથી (ભાવ લખો)
-                            </span>
-                          )}
-                        </td>
+                            {item.isMatched ? (
+                              <span className="inline-block mt-1 bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300">
+                                ✓ કેટલોગમાંથી આપોઆપ મેચ થયેલ
+                              </span>
+                            ) : (
+                              <span className="inline-block mt-1 bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-300">
+                                ⚠️ કેટલોગમાં નથી (ભાવ લખો)
+                              </span>
+                            )}
+                          </td>
 
-                        <td className="py-3.5 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
+                          <td className="py-3.5 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => updateQty(idx, item.quantity - 1)}
+                                className="h-7 w-7 rounded bg-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-300"
+                              >
+                                -
+                              </button>
+                              <span className="w-8 text-center font-bold text-gray-900 font-mono text-sm">
+                                {item.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => updateQty(idx, item.quantity + 1)}
+                                className="h-7 w-7 rounded bg-emerald-700 text-sm font-bold text-white hover:bg-emerald-800"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 text-right">
+                            {item.isMatched ? (
+                              <span className="font-bold text-gray-800 font-mono text-sm">
+                                ₹{item.rate.toFixed(2)}
+                              </span>
+                            ) : (
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.rate || ""}
+                                onChange={(e) => updateRate(idx, parseFloat(e.target.value) || 0)}
+                                placeholder="0.00"
+                                className="w-20 rounded border border-amber-300 bg-amber-50 p-1 text-right text-xs font-bold text-gray-900"
+                              />
+                            )}
+                          </td>
+
+                          <td className="py-3.5 text-right font-black text-emerald-900 font-mono text-base">
+                            ₹{item.total.toFixed(2)}
+                          </td>
+
+                          <td className="py-3.5 text-right">
                             <button
                               type="button"
-                              onClick={() => updateQty(idx, item.quantity - 1)}
-                              className="h-7 w-7 rounded bg-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-300"
+                              onClick={() => removeItem(idx)}
+                              className="text-gray-400 hover:text-red-500 text-sm font-bold p-1"
                             >
-                              -
+                              ✕
                             </button>
-                            <span className="w-8 text-center font-bold text-gray-900 font-mono text-sm">
-                              {item.quantity}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => updateQty(idx, item.quantity + 1)}
-                              className="h-7 w-7 rounded bg-emerald-700 text-sm font-bold text-white hover:bg-emerald-800"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </td>
-
-                        <td className="py-3.5 text-right">
-                          {item.isMatched ? (
-                            <span className="font-bold text-gray-800 font-mono text-sm">
-                              ₹{item.rate.toFixed(2)}
-                            </span>
-                          ) : (
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.rate || ""}
-                              onChange={(e) => updateRate(idx, parseFloat(e.target.value) || 0)}
-                              placeholder="0.00"
-                              className="w-20 rounded border border-amber-300 bg-amber-50 p-1 text-right text-xs font-bold text-gray-900"
-                            />
-                          )}
-                        </td>
-
-                        <td className="py-3.5 text-right font-black text-emerald-900 font-mono text-base">
-                          ₹{item.total.toFixed(2)}
-                        </td>
-
-                        <td className="py-3.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeItem(idx)}
-                            className="text-gray-400 hover:text-red-500 text-sm font-bold p-1"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
           </div>
 
-          {/* Bottom Confirm Action - ZERO SELECTION NEEDED */}
+          {/* Bottom Confirm Action */}
           <div className="mt-8 border-t border-gray-100 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>

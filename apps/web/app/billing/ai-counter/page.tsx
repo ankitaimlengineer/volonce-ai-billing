@@ -6,6 +6,13 @@ import { useEffect, useMemo, useState } from "react";
 import { authGet, authPost } from "@/lib/api";
 import WebcamCaptureModal from "@/app/components/WebcamCaptureModal";
 
+interface BoundingBox {
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+}
+
 interface ScannedItem {
   raw_name: string;
   matched_product_id: string | null;
@@ -15,6 +22,8 @@ interface ScannedItem {
   rate: number;
   tax_percent: number;
   total: number;
+  uncertainty_level?: string;
+  bounding_box?: BoundingBox | null;
 }
 
 interface Product {
@@ -56,6 +65,8 @@ export default function QuickAiCounterPage() {
   const [items, setItems] = useState<ScannedItem[]>([]);
   const [scanningProducts, setScanningProducts] = useState(false);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [hoveredItemIndex, setHoveredItemIndex] = useState<number | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
   // Photo 2: Customer Face Recognition States
   const [customerImage, setCustomerImage] = useState<string | null>(null);
@@ -128,10 +139,11 @@ export default function QuickAiCounterPage() {
     }
   };
 
-  // 1. Send Product Image to Gemini AI Vision
+  // 1. Send Product Image to Gemini AI Vision with Bounding Box Extraction
   const scanProductsFromImage = async (blob: Blob) => {
     setScanningProducts(true);
     setError("");
+    setDuplicateWarning(null);
     try {
       const formData = new FormData();
       formData.append("file", blob, "counter_scan.jpg");
@@ -145,6 +157,11 @@ export default function QuickAiCounterPage() {
 
       if (!res.ok) throw new Error("પ્રોડક્ટ સ્કેન નિષ્ફળ ગયું");
       const data = await res.json();
+
+      if (data.duplicate_info?.is_duplicate) {
+        setDuplicateWarning(data.duplicate_info.reason || "આ ફોટો અગાઉ સ્કેન થઈ ચૂક્યો છે.");
+      }
+
       setItems(data.items || []);
     } catch (err) {
       console.error(err);
@@ -269,7 +286,6 @@ export default function QuickAiCounterPage() {
       router.push(`/invoices/${res.id}`);
     } catch (err: unknown) {
       const e = err as { message?: string; status?: number };
-      // Phase 13 Subscription Expiry Lock Check
       if (e.status === 402 || e.message?.includes("સબસ્ક્રિપ્શન") || e.message?.includes("ટ્રાયલ")) {
         alert("⚠️ તમારો ૫-દિવસનો ફ્રી ટ્રાયલ સમાપ્ત થઈ ગયો છે! નવું બિલ બનાવવા માટે સબસ્ક્રિપ્શન પ્લાન ખરીદો.");
         router.push("/subscription");
@@ -329,6 +345,19 @@ export default function QuickAiCounterPage() {
         </div>
       )}
 
+      {duplicateWarning && (
+        <div className="mx-auto max-w-7xl mb-4 rounded-xl bg-amber-50 p-3.5 border border-amber-300 text-xs font-bold text-amber-900 flex items-center justify-between">
+          <span>⚠️ {duplicateWarning}</span>
+          <button
+            type="button"
+            onClick={() => setDuplicateWarning(null)}
+            className="text-amber-700 hover:text-amber-900"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Main 2-Camera Action Workspace */}
       <div className="mx-auto max-w-7xl grid grid-cols-1 gap-6 lg:grid-cols-12">
         
@@ -337,7 +366,7 @@ export default function QuickAiCounterPage() {
           <div>
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3">
               <span className="text-xs font-black uppercase tracking-wider text-emerald-800">
-                પગલું ૧: કાઉન્ટર પર સામાન
+                પગલું ૧: કાઉન્ટર પર સામાન (Visual AI Scan)
               </span>
               <button
                 type="button"
@@ -351,25 +380,76 @@ export default function QuickAiCounterPage() {
               </button>
             </div>
 
-            {/* Product Visual Area */}
+            {/* Product Visual Area with Live Bounding Boxes Overlay */}
             {productImage ? (
-              <div className="mb-4 flex items-center gap-3 rounded-xl bg-slate-50 p-2 border border-slate-200">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={productImage} alt="Products" className="h-16 w-24 rounded-lg object-contain bg-black" />
-                <div className="flex-1">
-                  <p className="text-xs font-bold text-emerald-950">✓ સામાનનો ફોટો સ્કેન થઈ ગયો છે</p>
-                  <p className="text-[11px] text-gray-500">જથ્થો વધારવા કે ઘટાડવા માટે + અથવા - દબાવો</p>
+              <div className="mb-4 rounded-xl bg-slate-900 p-2 border border-slate-300 shadow-inner">
+                <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={productImage}
+                    alt="Scanned Products"
+                    className="h-full w-full object-contain"
+                  />
+
+                  {/* 🟢 Live Bounding Boxes Rendered over the image */}
+                  {!scanningProducts &&
+                    items.map((it, idx) => {
+                      if (!it.bounding_box) return null;
+                      const { ymin, xmin, ymax, xmax } = it.bounding_box;
+                      const isHovered = hoveredItemIndex === idx;
+                      const isUncertain = it.uncertainty_level === "medium" || it.uncertainty_level === "high";
+
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            top: `${ymin}%`,
+                            left: `${xmin}%`,
+                            height: `${Math.max(8, ymax - ymin)}%`,
+                            width: `${Math.max(8, xmax - xmin)}%`,
+                          }}
+                          className={`absolute pointer-events-none rounded-lg border-2 transition-all duration-200 ${
+                            isHovered
+                              ? "border-yellow-400 bg-yellow-400/25 ring-4 ring-yellow-400/50 scale-105 z-20"
+                              : isUncertain
+                              ? "border-amber-400 bg-amber-400/15"
+                              : "border-emerald-400 bg-emerald-500/15"
+                          }`}
+                        >
+                          <span
+                            className={`absolute -top-6 left-0 rounded px-1.5 py-0.5 text-[10px] font-black uppercase text-white shadow ${
+                              isHovered
+                                ? "bg-yellow-500"
+                                : isUncertain
+                                ? "bg-amber-600"
+                                : "bg-emerald-700"
+                            }`}
+                          >
+                            {it.raw_name} ({it.confidence.toFixed(0)}%)
+                          </span>
+                        </div>
+                      );
+                    })}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCameraTarget("product");
-                    setIsCameraOpen(true);
-                  }}
-                  className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-white"
-                >
-                  🔄 ફરી ફોટો લો
-                </button>
+
+                <div className="mt-2 flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                    <span className="text-[11px] font-bold text-slate-200">
+                      ✓ {items.length} વસ્તુઓ ઓળખાઈ ગઈ છે (માઉસ ફેરવીને હાઈલાઈટ જુઓ)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCameraTarget("product");
+                      setIsCameraOpen(true);
+                    }}
+                    className="rounded-lg bg-slate-800 border border-slate-600 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                  >
+                    🔄 ફરી ફોટો લો
+                  </button>
+                </div>
               </div>
             ) : (
               <div
@@ -380,22 +460,26 @@ export default function QuickAiCounterPage() {
                 className="mb-4 cursor-pointer rounded-xl border-2 border-dashed border-emerald-400 bg-emerald-50/30 p-8 text-center hover:bg-emerald-50 transition"
               >
                 <span className="text-3xl block mb-1">🛍️</span>
-                <p className="text-sm font-bold text-emerald-900">કાઉન્ટર પર રાખેલા સામાનનો ફોટો પાડવા અહીં ક્લિક કરો</p>
-                <p className="text-xs text-gray-500 mt-0.5">AI આપોઆપ બોક્સ, પેકેટ કે વસ્તુઓ ઓળખી લેશે</p>
+                <p className="text-sm font-bold text-emerald-900">
+                  કાઉન્ટર પર રાખેલા સામાનનો ફોટો પાડવા અહીં ક્લિક કરો
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  AI આપોઆપ બોક્સ, પેકેટ કે વસ્તુઓ ઓળખીને લીલા બોક્સ બનાવશે
+                </p>
               </div>
             )}
 
-            {/* Recognized Items Table with Real-time Quantity Editor */}
+            {/* Recognized Items Table with Interactive Hover & Real-time Quantity Editor */}
             {scanningProducts ? (
               <div className="py-12 text-center text-emerald-800 text-sm font-bold animate-pulse">
-                🤖 AI સામાન ઓળખી રહ્યું છે... કૃપા કરીને થોડી સેકન્ડ રાહ જુઓ.
+                🤖 AI બોક્સ ઓળખીને લીલા Bounding Boxes બનાવી રહ્યું છે... થોડી સેકન્ડ રાહ જુઓ.
               </div>
             ) : items.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-gray-200 text-gray-500 uppercase font-extrabold">
-                      <th className="py-2.5">પ્રોડક્ટ</th>
+                      <th className="py-2.5">પ્રોડક્ટ (Item)</th>
                       <th className="py-2.5 text-center w-36">જથ્થો (QTY)</th>
                       <th className="py-2.5 text-right">દર (Rate)</th>
                       <th className="py-2.5 text-right">રકમ</th>
@@ -403,62 +487,79 @@ export default function QuickAiCounterPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 font-medium">
-                    {items.map((it, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50 transition">
-                        <td className="py-3 font-bold text-gray-900">
-                          {it.raw_name}
-                          <span className="ml-2 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-bold">
-                            {it.confidence.toFixed(0)}%
-                          </span>
-                        </td>
+                    {items.map((it, idx) => {
+                      const isHovered = hoveredItemIndex === idx;
+                      return (
+                        <tr
+                          key={idx}
+                          onMouseEnter={() => setHoveredItemIndex(idx)}
+                          onMouseLeave={() => setHoveredItemIndex(null)}
+                          className={`transition cursor-pointer ${
+                            isHovered ? "bg-emerald-50/80 font-bold" : "hover:bg-slate-50"
+                          }`}
+                        >
+                          <td className="py-3 text-gray-900">
+                            <span className="font-bold text-sm block">{it.raw_name}</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-bold">
+                                {it.confidence.toFixed(0)}% Match
+                              </span>
+                              {it.uncertainty_level && it.uncertainty_level !== "low" && (
+                                <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-300 font-bold">
+                                  ⚠️ ચકાસો
+                                </span>
+                              )}
+                            </div>
+                          </td>
 
-                        {/* Interactive Quantity Box: [-] [ 1 ] [+] */}
-                        <td className="py-3 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
+                          {/* Interactive Quantity Box: [-] [ 1 ] [+] */}
+                          <td className="py-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => updateQty(idx, it.quantity - 1)}
+                                className="h-7 w-7 rounded-lg bg-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-300 active:scale-95 transition"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                value={it.quantity}
+                                onChange={(e) => updateQty(idx, Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-12 text-center font-bold text-gray-900 border border-gray-300 rounded-lg py-1 font-mono text-xs focus:ring-1 focus:ring-emerald-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => updateQty(idx, it.quantity + 1)}
+                                className="h-7 w-7 rounded-lg bg-emerald-700 text-sm font-bold text-white hover:bg-emerald-800 active:scale-95 transition"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </td>
+
+                          <td className="py-3 text-right font-mono text-gray-700 font-semibold">
+                            ₹{Number(it.rate).toFixed(2)}
+                          </td>
+
+                          <td className="py-3 text-right font-black text-emerald-900 font-mono text-sm">
+                            ₹{Number(it.total).toFixed(2)}
+                          </td>
+
+                          <td className="py-3 text-right">
                             <button
                               type="button"
-                              onClick={() => updateQty(idx, it.quantity - 1)}
-                              className="h-7 w-7 rounded-lg bg-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-300 active:scale-95 transition"
+                              onClick={() => removeItem(idx)}
+                              className="text-gray-400 hover:text-red-500 text-sm font-bold ml-2 p-1"
+                              title="કાઢી નાખો"
                             >
-                              -
+                              ✕
                             </button>
-                            <input
-                              type="number"
-                              min="1"
-                              value={it.quantity}
-                              onChange={(e) => updateQty(idx, Math.max(1, parseInt(e.target.value) || 1))}
-                              className="w-12 text-center font-bold text-gray-900 border border-gray-300 rounded-lg py-1 font-mono text-xs focus:ring-1 focus:ring-emerald-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => updateQty(idx, it.quantity + 1)}
-                              className="h-7 w-7 rounded-lg bg-emerald-700 text-sm font-bold text-white hover:bg-emerald-800 active:scale-95 transition"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </td>
-
-                        <td className="py-3 text-right font-mono text-gray-700 font-semibold">
-                          ₹{Number(it.rate).toFixed(2)}
-                        </td>
-
-                        <td className="py-3 text-right font-black text-emerald-900 font-mono text-sm">
-                          ₹{Number(it.total).toFixed(2)}
-                        </td>
-
-                        <td className="py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeItem(idx)}
-                            className="text-gray-400 hover:text-red-500 text-sm font-bold ml-2 p-1"
-                            title="કાઢી નાખો"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
