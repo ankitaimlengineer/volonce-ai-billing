@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { authGet, authPost } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { authGet, authPost, authPut } from "@/lib/api";
+import WebcamCaptureModal from "@/app/components/WebcamCaptureModal";
 
-interface ScannedItem {
-  raw_name: string;
-  matched_product_id: string | null;
-  matched_product_name: string | null;
-  confidence: number;
+interface DraftItem {
+  id?: string;
+  product_id: string | null;
+  name: string;
   quantity: number;
   rate: number;
   tax_percent: number;
   total: number;
+  confidence: number;
 }
 
 interface Product {
@@ -30,103 +31,147 @@ interface Customer {
   outstanding: string;
 }
 
+interface RawDraftItemResponse {
+  product_id: string | null;
+  name: string;
+  quantity: string | number;
+  rate: string | number;
+  tax_percent: string | number;
+  total: string | number;
+  confidence: number;
+}
+
+interface DraftBillResponse {
+  draft_id: string;
+  is_duplicate_photo?: boolean;
+  items?: RawDraftItemResponse[];
+}
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 export default function AiReviewPage() {
   const router = useRouter();
 
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [items, setItems] = useState<ScannedItem[]>([]);
+  // સેશન અને મલ્ટી-ફોટો સ્ટેટ્સ
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+
+  // બિલ આઇટમ્સ અને ડેટાબેઝ લિસ્ટ
+  const [items, setItems] = useState<DraftItem[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
 
-  // Payment Mode: "cash" | "upi" | "credit" (ઉધાર) | "partial" (અડધા રોકડા / અડધા ઉધાર)
+  // પેમેન્ટ મોડ
   const [paymentType, setPaymentType] = useState<"cash" | "upi" | "credit" | "partial">("cash");
   const [paidAmountInput, setPaidAmountInput] = useState<string>("");
 
-  const [isDuplicate, setIsDuplicate] = useState(false);
-  const [duplicateReason, setDuplicateReason] = useState<string | null>(null);
-  const [overallConfidence, setOverallConfidence] = useState(95.0);
-  const [loadingAi, setLoadingAi] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
+  // ૧. ફોટો પ્રોસેસ કરવાનું ફંક્શન પહેલેથી વ્યાખ્યાયિત (Declared first)
+  const processPhotoToSession = useCallback(
+    async (blob: Blob, dataUrl: string, targetSessionId?: string) => {
+      const sId = targetSessionId || sessionId;
+      if (!sId) return;
 
-    async function initializeAiReview() {
-      // 1. Fetch catalog products and customer list
+      setAnalyzing(true);
+      setError("");
+      setDuplicateWarning(null);
+
       try {
-        const [prodRes, custRes] = await Promise.all([
-  authGet<{ items: Product[] }>("/api/v1/products?page_size=100"),
-  authGet<{ items: Customer[] }>("/api/v1/customers?page_size=100"),
-]);
-        if (active) {
-          setAllProducts(prodRes.items || []);
-          setCustomers(custRes.items || []);
-        }
-      } catch (e) {
-        console.error("Loading error", e);
-      }
-
-      // 2. Fetch image from session storage
-      const storedImg = sessionStorage.getItem("volonce_scanned_img");
-      if (!storedImg) {
-        if (active) setLoadingAi(false);
-        return;
-      }
-
-      if (active) setImagePreview(storedImg);
-
-      // 3. Process image through AI Backend
-      try {
-        const imgRes = await fetch(storedImg);
-        const blob = await imgRes.blob();
-
         const formData = new FormData();
-        formData.append("file", blob, "scan.jpg");
+        formData.append("file", blob, `scan_${Date.now()}.jpg`);
 
         const token = localStorage.getItem("access_token");
-        const apiRes = await fetch("http://localhost:8000/api/v1/ai/scan-bill", {
+        const res = await fetch(`${API_BASE}/api/v1/ai/sessions/${sId}/add-image`, {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
         });
 
-        if (!apiRes.ok) throw new Error("AI સ્કેન નિષ્ફળ ગયું");
-        const data = await apiRes.json();
+        if (!res.ok) throw new Error("AI સ્કેન નિષ્ફળ ગયું");
+        const data = (await res.json()) as DraftBillResponse;
 
-        if (active) {
-          setItems(data.items || []);
-          setOverallConfidence(Number(data.overall_confidence) || 95.0);
-          if (data.duplicate_info?.is_duplicate) {
-            setIsDuplicate(true);
-            setDuplicateReason(data.duplicate_info.reason || "આ બિલ અગાઉ નોંધાઈ ચૂક્યું છે.");
-          }
+        setCapturedPhotos((prev) => [...prev, dataUrl]);
+        setDraftId(data.draft_id);
+
+        if (data.is_duplicate_photo) {
+          setDuplicateWarning("⚠️ આ ફોટો અગાઉ આવી ચૂક્યો છે. ડબલ કાઉન્ટિંગ અટકાવવામાં આવ્યું છે.");
+        }
+
+        // અપડેટેડ કન્સોલિડેટેડ ડ્રાફ્ટ ફેચ કરો (Strict typing, no any)
+        const draftRes = await authGet<DraftBillResponse>(`/api/v1/ai/sessions/${sId}/draft`);
+        setItems(
+          (draftRes.items || []).map((it) => ({
+            product_id: it.product_id,
+            name: it.name,
+            quantity: Number(it.quantity) || 1,
+            rate: Number(it.rate) || 0,
+            tax_percent: Number(it.tax_percent) || 0,
+            total: Number(it.total) || 0,
+            confidence: Number(it.confidence) || 95,
+          }))
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "ફોટો પ્રોસેસ કરવામાં સમસ્યા આવી";
+        setError(msg);
+      } finally {
+        setAnalyzing(false);
+      }
+    },
+    [sessionId]
+  );
+
+  // ૨. શરૂઆતમાં ડેટા લોડ કરો અને નવું કેમેરા સેશન બનાવો
+  useEffect(() => {
+    let active = true;
+
+    async function init() {
+      try {
+        const [prodRes, custRes, sessRes] = await Promise.all([
+          authGet<{ items: Product[] }>("/api/v1/products?page_size=100"),
+          authGet<{ items: Customer[] }>("/api/v1/customers?page_size=100"),
+          authPost<{ id: string }>("/api/v1/ai/sessions", { mode: "multiple" }),
+        ]);
+
+        if (!active) return;
+        setAllProducts(prodRes.items || []);
+        setCustomers(custRes.items || []);
+        setSessionId(sessRes.id);
+
+        // જો અગાઉથી કોઈ ફોટો સેશન સ્ટોરેજમાં હોય તો પ્રોસેસ કરો
+        const storedImg = sessionStorage.getItem("volonce_scanned_img");
+        if (storedImg) {
+          sessionStorage.removeItem("volonce_scanned_img");
+          const imgRes = await fetch(storedImg);
+          const blob = await imgRes.blob();
+          await processPhotoToSession(blob, storedImg, sessRes.id);
         }
       } catch (err) {
-        console.error("AI Scan error, using local fallback:", err);
-      } finally {
-        if (active) setLoadingAi(false);
+        console.error("Initialization error:", err);
       }
     }
 
-    initializeAiReview();
+    init();
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [processPhotoToSession]);
 
-  // Update item quantity
+  // ૩. જથ્થો (+ / -) ફેરફાર
   const updateQty = (index: number, newQty: number) => {
     if (newQty < 1) return;
     setItems((prev) =>
       prev.map((item, i) => {
         if (i !== index) return item;
-        const rate = Number(item.rate) || 0;
-        const taxPct = Number(item.tax_percent) || 0;
-        const base = rate * newQty;
-        const tax = (base * taxPct) / 100;
+        const base = item.rate * newQty;
+        const tax = (base * item.tax_percent) / 100;
         return {
           ...item,
           quantity: newQty,
@@ -136,7 +181,7 @@ export default function AiReviewPage() {
     );
   };
 
-  // Switch product manually
+  // ૪. પ્રોડક્ટ મેન્યુઅલ સિલેક્ટ કરવી
   const switchProduct = (index: number, prodId: string) => {
     const prod = allProducts.find((p) => p.id === prodId);
     if (!prod) return;
@@ -150,68 +195,71 @@ export default function AiReviewPage() {
         const tax = (base * taxPct) / 100;
         return {
           ...item,
-          matched_product_id: prod.id,
-          matched_product_name: prod.name,
+          product_id: prod.id,
+          name: prod.name,
           rate,
           tax_percent: taxPct,
-          confidence: 100.0,
+          confidence: 100,
           total: Math.round((base + tax) * 100) / 100,
         };
       })
     );
   };
 
-  // Remove item
   const removeItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Calculations
+  // ૫. ટોટલ રકમ અને ઉધારી ગણતરી
   const calculations = useMemo(() => {
     let subtotal = 0;
     let taxTotal = 0;
-
-    items.forEach((item) => {
-      const rate = Number(item.rate) || 0;
-      const taxPct = Number(item.tax_percent) || 0;
-      const base = rate * item.quantity;
-      const tax = (base * taxPct) / 100;
+    items.forEach((it) => {
+      const base = it.rate * it.quantity;
+      const tax = (base * it.tax_percent) / 100;
       subtotal += base;
       taxTotal += tax;
     });
-
     const grandTotal = Math.round((subtotal + taxTotal) * 100) / 100;
-    return {
-      subtotal: Math.round(subtotal * 100) / 100,
-      taxTotal: Math.round(taxTotal * 100) / 100,
-      grandTotal,
-    };
+    return { subtotal, taxTotal, grandTotal };
   }, [items]);
 
-  // Determine Paid and Due Amounts based on Payment Type
   const { calculatedPaid, calculatedDue } = useMemo(() => {
     const total = calculations.grandTotal;
-    if (paymentType === "cash" || paymentType === "upi") {
-      return { calculatedPaid: total, calculatedDue: 0 };
-    }
-    if (paymentType === "credit") {
-      return { calculatedPaid: 0, calculatedDue: total };
-    }
-    // Partial payment
+    if (paymentType === "cash" || paymentType === "upi") return { calculatedPaid: total, calculatedDue: 0 };
+    if (paymentType === "credit") return { calculatedPaid: 0, calculatedDue: total };
     const entered = Number(paidAmountInput) || 0;
     const paid = Math.min(total, Math.max(0, entered));
     const due = Math.round((total - paid) * 100) / 100;
     return { calculatedPaid: paid, calculatedDue: due };
   }, [calculations.grandTotal, paymentType, paidAmountInput]);
 
-  // Final Bill Confirmation
+  // ૬. ડ્રાફ્ટ સેવ કરો (Save Draft)
+  const handleSaveDraft = async () => {
+    if (!draftId) return;
+    try {
+      await authPut(`/api/v1/ai/drafts/${draftId}`, {
+        customer_id: selectedCustomerId || null,
+        items: items.map((it) => ({
+          product_id: it.product_id,
+          name: it.name,
+          quantity: it.quantity,
+          rate: it.rate,
+          tax_percent: it.tax_percent,
+        })),
+      });
+      alert("✓ ડ્રાફ્ટ બિલ સફળતાપૂર્વક સેવ થઈ ગયું છે!");
+    } catch {
+      alert("ડ્રાફ્ટ સેવ કરવામાં સમસ્યા આવી.");
+    }
+  };
+
+  // ૭. ફાઇનલ બિલ કન્ફર્મ કરો (Create Official Invoice)
   const handleConfirmBill = async () => {
     if (items.length === 0) {
       setError("બિલમાં ઓછામાં ઓછી ૧ પ્રોડક્ટ હોવી જરૂરી છે.");
       return;
     }
-
-    // Validation: Udhar requires a registered customer
     if (calculatedDue > 0 && !selectedCustomerId) {
       setError("ઉધાર (બાકી) બિલ બનાવવા માટે ગ્રાહકનું નામ પસંદ કરવું ફરજિયાત છે.");
       return;
@@ -221,7 +269,6 @@ export default function AiReviewPage() {
     setError("");
 
     try {
-      // Build payments array
       const payments = [];
       if (calculatedPaid > 0) {
         payments.push({
@@ -233,7 +280,7 @@ export default function AiReviewPage() {
       const payload = {
         customer_id: selectedCustomerId || null,
         items: items.map((i) => ({
-          product_id: i.matched_product_id || allProducts[0]?.id,
+          product_id: i.product_id || allProducts[0]?.id,
           quantity: i.quantity,
           discount_percent: 0,
         })),
@@ -245,7 +292,6 @@ export default function AiReviewPage() {
         "Idempotency-Key": idempotencyKey,
       });
 
-      sessionStorage.removeItem("volonce_scanned_img");
       router.push(`/invoices/${res.id}`);
     } catch (err: unknown) {
       const e = err as { message?: string };
@@ -259,25 +305,29 @@ export default function AiReviewPage() {
       {/* Top Header */}
       <div className="mx-auto max-w-7xl mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-black text-emerald-950">
-              🤖 AI Review Screen (ડ્રાફ્ટ બિલ ચકાસણી)
-            </h1>
-            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 border border-emerald-300">
-              AI Confidence: {overallConfidence}%
-            </span>
-          </div>
+          <h1 className="text-2xl font-black text-emerald-950 flex items-center gap-2">
+            📸 Multi-Photo AI Review Screen (ડ્રાફ્ટ બિલ ચકાસણી)
+          </h1>
           <p className="text-xs text-gray-500 mt-1">
-            કેમેરાથી સ્કેન કરેલ પ્રોડક્ટ્સ, ગ્રાહકની વિગત અને રોકડ/ઉધાર ચૂકવણી
+            એક કરતાં વધુ ફોટા પાડીને તમામ સામાનનું એક જ પાકું બિલ તૈયાર કરો
           </p>
         </div>
 
-        <Link
-          href="/billing/new"
-          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition"
-        >
-          ← રદ કરો / પાછા જાઓ
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsCameraOpen(true)}
+            className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-800 transition"
+          >
+            📷 બીજો ફોટો ઉમેરો (Add Photo)
+          </button>
+          <Link
+            href="/billing/new"
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition"
+          >
+            ← પાછા જાઓ
+          </Link>
+        </div>
       </div>
 
       {error && (
@@ -286,57 +336,62 @@ export default function AiReviewPage() {
         </div>
       )}
 
-      {/* Duplicate Alert Banner */}
-      {isDuplicate && (
-        <div className="mx-auto max-w-7xl mb-6 rounded-xl bg-amber-50 p-4 border border-amber-300 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">⚠️</span>
-            <div>
-              <p className="text-sm font-bold text-amber-900">ડુપ્લિકેટ બિલ ચેતવણી!</p>
-              <p className="text-xs text-amber-700">{duplicateReason}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setIsDuplicate(false)}
-            className="text-xs font-bold text-amber-800 underline"
-          >
-            તેમ છતાં આગળ વધો
-          </button>
+      {duplicateWarning && (
+        <div className="mx-auto max-w-7xl mb-6 rounded-xl bg-amber-50 p-4 border border-amber-300 text-sm font-bold text-amber-900">
+          {duplicateWarning}
         </div>
       )}
 
       {/* Main Grid */}
       <div className="mx-auto max-w-7xl grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Column: Scanned Image */}
-        <div className="lg:col-span-5 rounded-2xl bg-white p-5 shadow-sm border border-emerald-100">
-          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center justify-between">
-            <span>📸 સ્કેન કરેલ અસલ ફોટો</span>
-            <span className="text-xs text-gray-400 font-normal">Original Scan</span>
-          </h3>
+        {/* Left Column: Photos Gallery in this Session */}
+        <div className="lg:col-span-5 flex flex-col justify-between rounded-2xl bg-white p-5 shadow-sm border border-emerald-100">
+          <div>
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3">
+              <span className="text-xs font-black uppercase tracking-wider text-emerald-800">
+                🖼️ સેશન ફોટા ({capturedPhotos.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsCameraOpen(true)}
+                className="text-xs font-bold text-emerald-700 hover:underline"
+              >
+                + ફોટો લો
+              </button>
+            </div>
 
-          <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-black flex items-center justify-center">
-            {imagePreview ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={imagePreview}
-                alt="Scanned item preview"
-                className="h-full w-full object-contain"
-              />
+            {capturedPhotos.length === 0 ? (
+              <div
+                onClick={() => setIsCameraOpen(true)}
+                className="cursor-pointer rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 p-10 text-center hover:bg-emerald-50 transition"
+              >
+                <span className="text-4xl block mb-2">📸</span>
+                <p className="text-sm font-bold text-emerald-950">ફોટો પાડવા અહીં ક્લિક કરો</p>
+                <p className="text-xs text-gray-500 mt-1">કાઉન્ટર પર સામાન રાખીને ૧ કે વધુ ફોટા લો</p>
+              </div>
             ) : (
-              <div className="text-center p-6 text-gray-400 text-xs">
-                કોઈ ફોટો ઉપલબ્ધ નથી
+              <div className="grid grid-cols-2 gap-3 overflow-y-auto max-h-[440px] p-1">
+                {capturedPhotos.map((url, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-black shadow-sm">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt={`Photo ${idx + 1}`} className="h-full w-full object-contain" />
+                    <span className="absolute bottom-1.5 left-1.5 bg-black/70 text-[10px] font-bold text-white px-2 py-0.5 rounded">
+                      #{idx + 1}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
-          <div className="mt-4 rounded-xl bg-emerald-50 p-3 border border-emerald-200/80">
-            <p className="text-xs text-emerald-900 font-medium leading-relaxed">
-              💡 <b>Gemini Vision:</b> ફોટામાં રહેલી પ્રોડક્ટ્સ ઓળખીને કેટલોગમાંથી ભાવ લાવી દેવામાં આવ્યા છે. તમે જથ્થો કે ભાવ મેન્યુઅલી બદલી શકો છો.
-            </p>
-          </div>
+          {analyzing && (
+            <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-center text-xs font-bold text-emerald-800 animate-pulse border border-emerald-200">
+              🤖 AI ફોટામાંથી પ્રોડક્ટ્સ અને જથ્થો ગણી રહ્યું છે...
+            </div>
+          )}
         </div>
 
-        {/* Right Column: AI Draft Bill & Customer / Payment Settings */}
+        {/* Right Column: AI Consolidated Draft Bill & Controls */}
         <div className="lg:col-span-7 flex flex-col justify-between rounded-2xl bg-white p-6 shadow-sm border border-emerald-100">
           <div>
             {/* Customer Selector Section */}
@@ -370,26 +425,27 @@ export default function AiReviewPage() {
 
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <h3 className="text-base font-bold text-gray-900">
-                📝 AI તૈયાર કરેલ ડ્રાફ્ટ બિલ
+                📝 AI તૈયાર કરેલ ડ્રાફ્ટ બિલ ({items.length} વસ્તુઓ)
               </h3>
-              <span className="text-xs font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                {items.length} પ્રોડક્ટ્સ ઓળખાઈ
-              </span>
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition"
+              >
+                💾 સેવ ડ્રાફ્ટ (Save Draft)
+              </button>
             </div>
 
-            {loadingAi ? (
-              <div className="py-12 text-center text-emerald-800 text-sm font-semibold animate-pulse">
-                🤖 AI ફોટામાંથી પ્રોડક્ટ્સ ઓળખી રહ્યું છે... કૃપા કરીને થોડીવાર રાહ જુઓ.
-              </div>
+            {items.length === 0 ? (
+              <p className="py-12 text-center text-xs text-gray-400">કેમેરાથી ફોટો લો એટલે બધી વસ્તુઓ અહીં દેખાશે.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs font-bold text-gray-500 uppercase">
                       <th className="py-2.5">પ્રોડક્ટ</th>
-                      <th className="py-2.5">Confidence</th>
                       <th className="py-2.5 text-center">જથ્થો (Qty)</th>
-                      <th className="py-2.5">ભાવ (Rate)</th>
+                      <th className="py-2.5 text-right">ભાવ (Rate)</th>
                       <th className="py-2.5 text-right">રકમ</th>
                       <th className="py-2.5"></th>
                     </tr>
@@ -399,10 +455,10 @@ export default function AiReviewPage() {
                       <tr key={idx} className="hover:bg-slate-50/70 transition">
                         <td className="py-3">
                           <span className="font-bold text-gray-900 block text-xs mb-1">
-                            {item.raw_name}
+                            {item.name}
                           </span>
                           <select
-                            value={item.matched_product_id || ""}
+                            value={item.product_id || ""}
                             onChange={(e) => switchProduct(idx, e.target.value)}
                             className="w-48 text-xs text-gray-700 bg-slate-100 border border-gray-200 rounded-lg p-1"
                           >
@@ -416,12 +472,6 @@ export default function AiReviewPage() {
                         </td>
 
                         <td className="py-3">
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            {Number(item.confidence || 0).toFixed(0)}%
-                          </span>
-                        </td>
-
-                        <td className="py-3">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               type="button"
@@ -430,25 +480,25 @@ export default function AiReviewPage() {
                             >
                               -
                             </button>
-                            <span className="w-6 text-center font-bold text-gray-800">
+                            <span className="w-6 text-center font-bold text-gray-800 font-mono">
                               {item.quantity}
                             </span>
                             <button
                               type="button"
                               onClick={() => updateQty(idx, item.quantity + 1)}
-                              className="h-6 w-6 rounded bg-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-300"
+                              className="h-6 w-6 rounded bg-emerald-700 text-xs font-bold text-white hover:bg-emerald-800"
                             >
                               +
                             </button>
                           </div>
                         </td>
 
-                        <td className="py-3 font-medium text-gray-700 font-mono">
-                          ₹{Number(item.rate || 0).toFixed(2)}
+                        <td className="py-3 text-right font-medium text-gray-700 font-mono">
+                          ₹{item.rate.toFixed(2)}
                         </td>
 
                         <td className="py-3 text-right font-black text-gray-900 font-mono">
-                          ₹{Number(item.total || 0).toFixed(2)}
+                          ₹{item.total.toFixed(2)}
                         </td>
 
                         <td className="py-3 text-right">
@@ -467,7 +517,7 @@ export default function AiReviewPage() {
               </div>
             )}
 
-            {/* Payment Method Selector (રોકડ / UPI / ઉધાર / આંશિક) */}
+            {/* Payment Method Selector */}
             <div className="mt-6 border-t border-gray-100 pt-4">
               <span className="text-xs font-bold text-gray-700 block mb-2">
                 ચુકવણી પદ્ધતિ પસંદ કરો (Payment Mode):
@@ -582,6 +632,13 @@ export default function AiReviewPage() {
           </div>
         </div>
       </div>
+
+      {/* Camera Capture Modal */}
+      <WebcamCaptureModal
+        isOpen={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onCapture={(blob, dataUrl) => processPhotoToSession(blob, dataUrl)}
+      />
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import {
-  scanBillImage,
+  createCameraSession,
+  addImageToCameraSession,
+  getSessionDraftBill,
   createInvoice,
   downloadInvoicePdf,
   printInvoicePdf,
@@ -28,9 +30,11 @@ interface Props {
 }
 
 export default function AiCameraBillingScreen({ onBack }: Props) {
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // સેશન અને મલ્ટી-ફોટો સ્ટેટ્સ
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
   const [items, setItems] = useState<ScannedItem[]>([]);
+  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "upi">("cash");
 
@@ -38,7 +42,21 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
   const [createdInvoice, setCreatedInvoice] = useState<any | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
 
-  // ૧. કેમેરાથી ફોટો લો
+  // ૧. સ્ક્રીન ખૂલે ત્યારે નવું કેમેરા સેશન શરૂ કરો
+  useEffect(() => {
+    let isMounted = true;
+    createCameraSession("multiple")
+      .then((res) => {
+        if (isMounted) setSessionId(res.id);
+      })
+      .catch((err) => console.log("Session init error:", err));
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // ૨. કેમેરાથી ફોટો લો
   const takePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
@@ -56,7 +74,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
     }
   };
 
-  // ૨. ગેલેરીમાંથી પસંદ કરો
+  // ૩. ગેલેરીમાંથી પસંદ કરો
   const pickFromGallery = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
@@ -68,13 +86,29 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
     }
   };
 
-  // ૩. AI Backend પર મોકલો
+  // ૪. સેશનમાં ફોટો ઉમેરો અને કન્સોલિડેટેડ ડ્રાફ્ટ મેળવો
   const processPhoto = async (uri: string) => {
-    setImageUri(uri);
+    if (!sessionId) {
+      Alert.alert("ભૂલ", "કેમેરા સેશન શરૂ થઈ શક્યું નથી. ફરી પ્રયાસ કરો.");
+      return;
+    }
+
+    setPhotos((prev) => [...prev, uri]);
     setLoading(true);
+
     try {
-      const data = await scanBillImage(uri);
-      setItems(data.items || []);
+      const res = await addImageToCameraSession(sessionId, uri);
+
+      if (res.is_duplicate_photo) {
+        Alert.alert(
+          "ડુપ્લિકેટ ફોટો ચેતવણી",
+          "આ ફોટો અગાઉ આવી ગયો હોય તેવો લાગે છે. સામાનનું ડબલ કાઉન્ટિંગ અટકાવવામાં આવ્યું છે."
+        );
+      }
+
+      // અપડેટેડ કન્સોલિડેટેડ ડ્રાફ્ટ ફેચ કરો
+      const draft = await getSessionDraftBill(sessionId);
+      setItems(draft.items || []);
     } catch (err: any) {
       Alert.alert("સ્કેન ભૂલ", err.message || "પ્રોડક્ટ્સ ઓળખવામાં સમસ્યા આવી.");
     } finally {
@@ -82,7 +116,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
     }
   };
 
-  // જથ્થો (+ / -) ફેરફાર
+  // ૫. જથ્થો (+ / -) ફેરફાર
   const updateQty = (index: number, newQty: number) => {
     if (newQty < 1) return;
     setItems((prev) =>
@@ -107,7 +141,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
 
   const grandTotal = items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
 
-  // ૪. બિલ કન્ફર્મ કરો
+  // ૬. પાકું બિલ કન્ફર્મ કરો
   const handleConfirmBill = async () => {
     if (items.length === 0) {
       Alert.alert("ધ્યાન આપો", "બિલમાં ઓછામાં ઓછી ૧ પ્રોડક્ટ હોવી જરૂરી છે.");
@@ -119,7 +153,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
       const payload: any = {
         customer_id: null,
         items: items.map((i) => ({
-          product_id: i.matched_product_id,
+          product_id: i.matched_product_id || (i as any).product_id,
           quantity: i.quantity,
           discount_percent: 0,
         })),
@@ -132,7 +166,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
       };
 
       const invoiceRes = await createInvoice(payload);
-      setCreatedInvoice(invoiceRes); // મોડલ ઓપન થશે
+      setCreatedInvoice(invoiceRes);
     } catch (err: any) {
       Alert.alert("ભૂલ", err.message || "બિલ બનાવવામાં સમસ્યા આવી.");
     } finally {
@@ -153,7 +187,7 @@ export default function AiCameraBillingScreen({ onBack }: Props) {
     const itemsList = items
       .map(
         (it) =>
-          `• *${it.matched_product_name || it.raw_name}* (જથ્થો: ${it.quantity}) = ₹${Number(it.total).toFixed(2)}`
+          `• *${it.matched_product_name || (it as any).name || it.raw_name}* (જથ્થો: ${it.quantity}) = ₹${Number(it.total).toFixed(2)}`
       )
       .join("\n");
 
@@ -215,46 +249,53 @@ ${itemsList}
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <Text style={styles.backText}>← પાછા જાઓ</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>📸 AI કેમેરા બિલિંગ</Text>
+        <Text style={styles.title}>📸 મલ્ટી-ફોટો AI બિલિંગ</Text>
       </View>
 
-      {/* Camera Capture Section */}
-      {!imageUri || items.length === 0 ? (
+      {/* Camera Capture Section (જો હજુ કોઈ ફોટો ન લીધો હોય) */}
+      {photos.length === 0 ? (
         <View style={styles.captureBox}>
-          {loading ? (
-            <View style={{ alignItems: "center" }}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={styles.loadingText}>🤖 AI પ્રોડક્ટ્સ ઓળખી રહ્યું છે...</Text>
-            </View>
-          ) : (
-            <>
-              <Text style={styles.guideTitle}>સામાનનો ફોટો પાડો</Text>
-              <Text style={styles.guideSub}>કાઉન્ટર પર રાખેલા સામાનનો સ્પષ્ટ ફોટો લો</Text>
+          <Text style={styles.guideTitle}>સામાનના ફોટા પાડો</Text>
+          <Text style={styles.guideSub}>કાઉન્ટર પર રાખેલા સામાનના ૧ કે તેથી વધુ ફોટા લઈ શકો છો</Text>
 
-              <TouchableOpacity style={styles.cameraBtn} onPress={takePhoto}>
-                <Text style={styles.cameraBtnText}>📷 કેમેરા શરૂ કરો (Take Photo)</Text>
-              </TouchableOpacity>
+          <TouchableOpacity style={styles.cameraBtn} onPress={takePhoto}>
+            <Text style={styles.cameraBtnText}>📷 પહેલો ફોટો લો (Take Photo)</Text>
+          </TouchableOpacity>
 
-              <TouchableOpacity style={styles.galleryBtn} onPress={pickFromGallery}>
-                <Text style={styles.galleryBtnText}>🖼️ ગેલેરીમાંથી પસંદ કરો</Text>
-              </TouchableOpacity>
-            </>
-          )}
+          <TouchableOpacity style={styles.galleryBtn} onPress={pickFromGallery}>
+            <Text style={styles.galleryBtnText}>🖼️ ગેલેરીમાંથી પસંદ કરો</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         /* AI Review & Edit Screen */
         <View style={{ flex: 1 }}>
+          {/* Photos Reel Bar (પાડેલા બધા ફોટાઓનું લિસ્ટ) */}
           <View style={styles.previewBar}>
-            {imageUri && <Image source={{ uri: imageUri }} style={styles.miniImg} />}
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.previewSuccess}>✓ સ્કેન સફળ! {items.length} પ્રોડક્ટ્સ મળી</Text>
-              <Text style={styles.previewSub}>જથ્થો બદલવા માટે + અથવા - દબાવો</Text>
-            </View>
-            <TouchableOpacity onPress={takePhoto} style={styles.retakeBtn}>
-              <Text style={styles.retakeText}>ફરી લો 🔄</Text>
+            <FlatList
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              data={photos}
+              keyExtractor={(_, idx) => String(idx)}
+              renderItem={({ item, index }) => (
+                <View style={styles.photoThumbContainer}>
+                  <Image source={{ uri: item }} style={styles.miniImg} />
+                  <Text style={styles.photoIndexBadge}>#{index + 1}</Text>
+                </View>
+              )}
+            />
+            <TouchableOpacity onPress={takePhoto} style={styles.retakeBtn} disabled={loading}>
+              <Text style={styles.retakeText}>➕ બીજો ફોટો</Text>
             </TouchableOpacity>
           </View>
 
+          {loading && (
+            <View style={styles.loadingStrip}>
+              <ActivityIndicator size="small" color="#047857" />
+              <Text style={styles.loadingStripText}>🤖 AI ફોટામાંથી સામાન અને જથ્થો ગણી રહ્યું છે...</Text>
+            </View>
+          )}
+
+          {/* Consolidated Items List */}
           <FlatList
             data={items}
             keyExtractor={(_, idx) => String(idx)}
@@ -262,7 +303,9 @@ ${itemsList}
             renderItem={({ item, index }) => (
               <View style={styles.itemCard}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.itemName}>{item.matched_product_name || item.raw_name}</Text>
+                  <Text style={styles.itemName}>
+                    {item.matched_product_name || (item as any).name || item.raw_name}
+                  </Text>
                   <Text style={styles.itemRate}>દર: ₹{Number(item.rate).toFixed(2)}</Text>
                 </View>
 
@@ -283,8 +326,14 @@ ${itemsList}
                 </TouchableOpacity>
               </View>
             )}
+            ListEmptyComponent={
+              !loading ? (
+                <Text style={styles.emptyItemsText}>હજુ કોઈ સામાન ઉમેરાયો નથી. વધુ ફોટો લો.</Text>
+              ) : null
+            }
           />
 
+          {/* Payment Method Selector */}
           <View style={styles.payBar}>
             <Text style={styles.payLabel}>ચુકવણી પદ્ધતિ:</Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
@@ -307,15 +356,16 @@ ${itemsList}
             </View>
           </View>
 
+          {/* Bottom Confirm Bar */}
           <View style={styles.bottomBar}>
             <View>
               <Text style={styles.totalLabel}>કુલ બિલ રકમ:</Text>
               <Text style={styles.totalValue}>₹{grandTotal.toFixed(2)}</Text>
             </View>
             <TouchableOpacity
-              style={[styles.confirmBtn, submitting && { opacity: 0.6 }]}
+              style={[styles.confirmBtn, (submitting || loading) && { opacity: 0.6 }]}
               onPress={handleConfirmBill}
-              disabled={submitting}
+              disabled={submitting || loading}
             >
               {submitting ? (
                 <ActivityIndicator color="#fff" />
@@ -327,7 +377,7 @@ ${itemsList}
         </View>
       )}
 
-      {/* પાવરફુલ બિલ સક્સેસ મોડલ (WhatsApp + PDF Download + Print) */}
+      {/* સફળતા મોડલ (WhatsApp + PDF Download + Print) */}
       <Modal visible={Boolean(createdInvoice)} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -340,12 +390,10 @@ ${itemsList}
               કુલ રકમ: ₹{Number(createdInvoice?.grand_total || grandTotal).toFixed(2)}
             </Text>
 
-            {/* બટન ૧: WhatsApp */}
             <TouchableOpacity style={styles.btnWhatsApp} onPress={handleSendWhatsApp}>
               <Text style={styles.btnWhatsAppText}>💬 WhatsApp પર મોકલો</Text>
             </TouchableOpacity>
 
-            {/* બટન ૨: PDF ડાઉનલોડ */}
             <TouchableOpacity
               style={styles.btnPdf}
               onPress={handleDownloadPdf}
@@ -358,7 +406,6 @@ ${itemsList}
               )}
             </TouchableOpacity>
 
-            {/* બટન ૩: પ્રિન્ટ */}
             <TouchableOpacity
               style={styles.btnPrint}
               onPress={handlePrint}
@@ -367,7 +414,6 @@ ${itemsList}
               <Text style={styles.btnPrintText}>🖨️ પ્રિન્ટ કરો (Print Bill)</Text>
             </TouchableOpacity>
 
-            {/* બટન ૪: પૂર્ણ (Done) */}
             <TouchableOpacity
               style={styles.btnDone}
               onPress={() => {
@@ -422,7 +468,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   galleryBtnText: { color: "#334155", fontSize: 15, fontWeight: "600" },
-  loadingText: { marginTop: 14, fontSize: 14, fontWeight: "600", color: "#047857" },
   previewBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -431,11 +476,35 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#A7F3D0",
   },
-  miniImg: { width: 44, height: 44, borderRadius: 6, backgroundColor: "#000" },
-  previewSuccess: { fontSize: 13, fontWeight: "700", color: "#065F46" },
-  previewSub: { fontSize: 11, color: "#047857" },
-  retakeBtn: { padding: 6 },
-  retakeText: { fontSize: 12, color: "#065F46", fontWeight: "700" },
+  photoThumbContainer: { position: "relative", marginRight: 8 },
+  miniImg: { width: 50, height: 50, borderRadius: 8, backgroundColor: "#000" },
+  photoIndexBadge: {
+    position: "absolute",
+    bottom: 2,
+    left: 2,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "bold",
+    paddingHorizontal: 4,
+    borderRadius: 3,
+  },
+  retakeBtn: {
+    backgroundColor: "#047857",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginLeft: 6,
+  },
+  retakeText: { fontSize: 12, color: "#FFFFFF", fontWeight: "700" },
+  loadingStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 8,
+    backgroundColor: "#FEF3C7",
+  },
+  loadingStripText: { marginLeft: 8, fontSize: 12, color: "#92400E", fontWeight: "600" },
   itemCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -461,6 +530,7 @@ const styles = StyleSheet.create({
   itemTotal: { fontSize: 14, fontWeight: "800", color: "#047857", minWidth: 65, textAlign: "right" },
   deleteBtn: { padding: 6, marginLeft: 6 },
   deleteText: { color: "#94A3B8", fontWeight: "700", fontSize: 14 },
+  emptyItemsText: { textAlign: "center", color: "#94A3B8", marginTop: 40, fontSize: 13 },
   payBar: {
     padding: 12,
     backgroundColor: "#FFFFFF",
@@ -496,8 +566,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   confirmText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
-
-  // મોડલ સ્ટાઇલિંગ
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.65)",

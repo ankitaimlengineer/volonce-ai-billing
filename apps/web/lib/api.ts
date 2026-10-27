@@ -152,6 +152,11 @@ export async function authUpload<T>(path: string, file: Blob | File): Promise<T>
   return res.json() as Promise<T>;
 }
 
+// 👉 આ નવું એક્સપોર્ટ ઉમેર્યું છે (જે CSV / JSON ઈમ્પોર્ટ વખતે વપરાય છે)
+export async function authUploadJson<T>(path: string, file: Blob | File): Promise<T> {
+  return authUpload<T>(path, file);
+}
+
 export async function authDownload(path: string, filename: string): Promise<void> {
   const token = localStorage.getItem("access_token");
   const res = await fetch(`${API_URL}${path}`, {

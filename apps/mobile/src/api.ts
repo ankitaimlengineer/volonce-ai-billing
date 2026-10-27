@@ -355,3 +355,29 @@ export async function shareOrSavePdf(fileUri: string) {
     });
   }
 }
+
+// ---------------- PHASE 10 & 11: MULTI-PHOTO SESSIONS ----------------
+
+export async function createCameraSession(mode: "single" | "multiple" = "multiple") {
+  return authRequest<{ id: string }>("POST", "/api/v1/ai/sessions", { mode });
+}
+
+export async function addImageToCameraSession(sessionId: string, imageUri: string) {
+  let token = await getAccess();
+  const fileBlob = await uriToBlob(imageUri);
+
+  const formData = new FormData();
+  formData.append("file", fileBlob, "session_photo.jpg");
+
+  const res = await fetch(`${API_URL}/api/v1/ai/sessions/${sessionId}/add-image`, {
+    method: "POST",
+    headers: { Authorization: token ? `Bearer ${token}` : "" },
+    body: formData,
+  });
+
+  return parse<any>(res);
+}
+
+export async function getSessionDraftBill(sessionId: string) {
+  return authRequest<any>("GET", `/api/v1/ai/sessions/${sessionId}/draft`);
+}
