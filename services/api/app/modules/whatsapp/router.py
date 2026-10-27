@@ -2,6 +2,7 @@ import logging
 import urllib.parse
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.core.deps import get_db, require_roles
 from app.models import (
     BusinessSettings,
     Customer,
+    CustomerLedger,
     Invoice,
     InvoiceItem,
     InvoicePayment,
@@ -19,10 +21,16 @@ from app.models import (
     User,
     WhatsAppMessage,
 )
+from app.modules.sales.customers import outstanding
 from app.modules.whatsapp.client import whatsapp_client
-from app.modules.whatsapp.pdf_service import generate_invoice_pdf_bytes
+from app.modules.whatsapp.pdf_service import (
+    generate_customer_ledger_pdf_bytes,
+    generate_invoice_pdf_bytes,
+)
 from app.modules.whatsapp.schemas import (
     SendInvoiceWhatsAppRequest,
+    SendLedgerWhatsAppRequest,
+    SendReminderRequest,
     WhatsAppMessageStatusOut,
     WhatsAppSendResponse,
 )
@@ -33,7 +41,9 @@ router = APIRouter(prefix="/api/v1/whatsapp", tags=["whatsapp"])
 can_write = require_roles("owner", "manager", "cashier")
 
 
-# ================= ૧. WHATSAPP પર બિલ મોકલો અને ટ્રેકિંગ શરૂ કરો =================
+# ==============================================================================
+# ૧. WHATSAPP પર બિલ મોકલો અને ટ્રેકિંગ શરૂ કરો
+# ==============================================================================
 @router.post("/send-invoice/{invoice_id}", response_model=WhatsAppSendResponse)
 async def send_invoice_via_whatsapp(
     invoice_id: uuid.UUID,
@@ -154,7 +164,269 @@ async def send_invoice_via_whatsapp(
     )
 
 
-# ================= ૨. META CLOUD API WEBHOOK VERIFICATION (GET) =================
+# ==============================================================================
+# ૨. CUSTOMER LEDGER STATEMENT WHATSAPP પર મોકલો
+# ==============================================================================
+@router.post("/customers/{customer_id}/send-statement", response_model=WhatsAppSendResponse)
+async def send_customer_ledger_via_whatsapp(
+    customer_id: uuid.UUID,
+    payload: SendLedgerWhatsAppRequest | None = None,
+    user: User = Depends(can_write),
+    db: Session = Depends(get_db),
+):
+    org_id = user.organization_id
+    customer = db.scalar(
+        select(Customer).where(Customer.id == customer_id, Customer.organization_id == org_id)
+    )
+    if not customer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Customer not found")
+
+    phone = payload.phone if payload and payload.phone else customer.mobile
+    if not phone:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "આ ગ્રાહકનો મોબાઈલ નંબર નોંધાયેલો નથી.")
+
+    # ખાતાવહી એન્ટ્રીઓ લાવો અને રનિંગ બેલેન્સ ગણો
+    entries = db.scalars(
+        select(CustomerLedger)
+        .where(CustomerLedger.organization_id == org_id, CustomerLedger.customer_id == customer.id)
+        .order_by(CustomerLedger.created_at, CustomerLedger.id)
+    ).all()
+
+    bal = customer.opening_balance
+    rows = []
+    for e in entries:
+        bal = bal + e.debit - e.credit
+        e.balance = bal  # PDF ડિસ્પ્લે માટે
+        rows.append(e)
+
+    current_due = outstanding(db, org_id, customer)
+    org = db.get(Organization, org_id)
+    b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
+
+    try:
+        pdf_bytes = generate_customer_ledger_pdf_bytes(
+            customer=customer,
+            ledger_rows=rows,
+            opening_balance=customer.opening_balance,
+            outstanding_balance=current_due,
+            org=org,
+            settings=b_settings,
+        )
+    except Exception as e:
+        logger.exception("Failed to generate ledger PDF: %s", e)
+        raise HTTPException(status_code=500, detail=f"PDF બનાવવામાં સમસ્યા આવી: {str(e)}")
+
+    filename = f"Statement-{customer.name.replace(' ', '_')}.pdf"
+    clean_phone = whatsapp_client.clean_phone_number(phone)
+    org_title = org.name if org and org.name else "STORE"
+
+    caption = (
+        f"નમસ્તે {customer.name} જી!\n"
+        f"*{org_title}* તરફથી તમારી ખાતાવહીનું સ્ટેટમેન્ટ (Ledger Statement):\n"
+        f"💰 કુલ બાકી ઉધારી: *₹{float(current_due):.2f}*\n"
+        f"કૃપા કરીને જોડાયેલ PDF ફાઇલ ચકાસી લેશો. આભાર!"
+    )
+
+    now = datetime.now(timezone.utc)
+
+    # Cloud API થી મોકલવાનો પ્રયાસ કરો
+    if whatsapp_client.is_configured:
+        try:
+            media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
+            if media_id:
+                result = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+                if result.get("success"):
+                    wamid = result.get("data", {}).get("messages", [{}])[0].get("id")
+                    msg_record = WhatsAppMessage(
+                        organization_id=org_id,
+                        recipient_phone=clean_phone,
+                        message_type="ledger_statement",
+                        whatsapp_message_id=wamid,
+                        status="sent",
+                        sent_at=now,
+                    )
+                    db.add(msg_record)
+                    db.commit()
+
+                    return WhatsAppSendResponse(
+                        success=True,
+                        status="sent",
+                        message="ગ્રાહકને ખાતાવહી સ્ટેટમેન્ટ WhatsApp પર મોકલાઈ ગયું છે!",
+                        message_id=wamid,
+                    )
+        except Exception as e:
+            logger.warning("WhatsApp API Error, using chat fallback: %s", e)
+
+    # Fallback Direct WhatsApp Chat
+    encoded_caption = urllib.parse.quote(caption)
+    fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
+
+    msg_record = WhatsAppMessage(
+        organization_id=org_id,
+        recipient_phone=clean_phone,
+        message_type="ledger_statement",
+        status="fallback",
+    )
+    db.add(msg_record)
+    db.commit()
+
+    return WhatsAppSendResponse(
+        success=False,
+        status="fallback",
+        message="WhatsApp ડાયરેક્ટ ચેટ ખુલી રહી છે...",
+        fallback_url=fallback_url,
+    )
+
+
+# ==============================================================================
+# ૩. PAYMENT REMINDER મેસેજ મોકલો
+# ==============================================================================
+@router.post("/customers/{customer_id}/send-reminder", response_model=WhatsAppSendResponse)
+async def send_customer_payment_reminder(
+    customer_id: uuid.UUID,
+    payload: SendReminderRequest | None = None,
+    user: User = Depends(can_write),
+    db: Session = Depends(get_db),
+):
+    org_id = user.organization_id
+    customer = db.scalar(
+        select(Customer).where(Customer.id == customer_id, Customer.organization_id == org_id)
+    )
+    if not customer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Customer not found")
+
+    phone = payload.phone if payload and payload.phone else customer.mobile
+    if not phone:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "મોબાઈલ નંબર જરૂરી છે.")
+
+    current_due = outstanding(db, org_id, customer)
+    if current_due <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "આ ગ્રાહકની કોઈ ઉધારી બાકી નથી.")
+
+    org = db.get(Organization, org_id)
+    b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
+    org_title = org.name if org and org.name else "STORE"
+    upi_id = (b_settings.upi_id if b_settings and b_settings.upi_id else "") or "store@upi"
+
+    reminder_text = (
+        f"નમસ્તે {customer.name} જી,\n\n"
+        f"*{org_title}* તરફથી નમ્ર સ્મૃતિપત્ર (Payment Reminder):\n"
+        f"આપના ખાતામાં *₹{float(current_due):.2f}* ની ઉધારી ચૂકવણી બાકી છે.\n\n"
+        f"આપ નીચે આપેલ UPI ID પર સીધા પૈસા જમા કરી શકો છો:\n"
+        f"📱 UPI ID: *{upi_id}*\n\n"
+        f"ચૂકવણી કરી દીધી હોય તો આ મેસેજ અવગણશો. આભાર!"
+    )
+
+    clean_phone = whatsapp_client.clean_phone_number(phone)
+    now = datetime.now(timezone.utc)
+
+    if whatsapp_client.is_configured:
+        try:
+            result = await whatsapp_client.send_text_message(clean_phone, reminder_text)
+            if result.get("success"):
+                wamid = result.get("data", {}).get("messages", [{}])[0].get("id")
+                msg_record = WhatsAppMessage(
+                    organization_id=org_id,
+                    recipient_phone=clean_phone,
+                    message_type="payment_reminder",
+                    whatsapp_message_id=wamid,
+                    status="sent",
+                    sent_at=now,
+                )
+                db.add(msg_record)
+                db.commit()
+
+                return WhatsAppSendResponse(
+                    success=True,
+                    status="sent",
+                    message="ગ્રાહકને પેમેન્ટ રીમાઇન્ડર મેસેજ મોકલાઈ ગયો છે!",
+                    message_id=wamid,
+                )
+        except Exception as e:
+            logger.warning("WhatsApp API Error: %s", e)
+
+    # Fallback Direct WhatsApp Chat
+    encoded = urllib.parse.quote(reminder_text)
+    fallback_url = f"https://wa.me/{clean_phone}?text={encoded}"
+    msg_record = WhatsAppMessage(
+        organization_id=org_id,
+        recipient_phone=clean_phone,
+        message_type="payment_reminder",
+        status="fallback",
+    )
+    db.add(msg_record)
+    db.commit()
+
+    return WhatsAppSendResponse(
+        success=False,
+        status="fallback",
+        message="WhatsApp ચેટ ખુલી રહી છે...",
+        fallback_url=fallback_url,
+    )
+
+
+# ==============================================================================
+# ૪. CUSTOMER STATEMENT PDF ડાઉનલોડ ENDPOINT (વેબ / મોબાઇલ માટે)
+# ==============================================================================
+@router.get("/customers/{customer_id}/download-ledger-pdf")
+def download_customer_ledger_pdf(
+    customer_id: uuid.UUID,
+    user: User = Depends(can_write),
+    db: Session = Depends(get_db),
+):
+    org_id = user.organization_id
+    customer = db.scalar(
+        select(Customer).where(Customer.id == customer_id, Customer.organization_id == org_id)
+    )
+    if not customer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Customer not found")
+
+    entries = db.scalars(
+        select(CustomerLedger)
+        .where(CustomerLedger.organization_id == org_id, CustomerLedger.customer_id == customer.id)
+        .order_by(CustomerLedger.created_at, CustomerLedger.id)
+    ).all()
+
+    bal = customer.opening_balance
+    rows = []
+    for e in entries:
+        bal = bal + e.debit - e.credit
+        e.balance = bal
+        rows.append(e)
+
+    current_due = outstanding(db, org_id, customer)
+    org = db.get(Organization, org_id)
+    b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
+
+    try:
+        pdf_bytes = generate_customer_ledger_pdf_bytes(
+            customer=customer,
+            ledger_rows=rows,
+            opening_balance=customer.opening_balance,
+            outstanding_balance=current_due,
+            org=org,
+            settings=b_settings,
+        )
+    except Exception as e:
+        logger.exception("Failed to generate ledger PDF: %s", e)
+        raise HTTPException(status_code=500, detail=f"PDF બનાવવામાં ભૂલ: {str(e)}")
+
+    safe_name = customer.name.replace(" ", "_")
+    return Response(
+        content=pdf_bytes,
+        status_code=200,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="Statement-{safe_name}.pdf"',
+            "Content-Length": str(len(pdf_bytes)),
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+    )
+
+
+# ==============================================================================
+# ૫. META CLOUD API WEBHOOK VERIFICATION (GET)
+# ==============================================================================
 @router.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
@@ -172,7 +444,9 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
-# ================= ૩. META CLOUD API STATUS LISTENER (POST) =================
+# ==============================================================================
+# ૬. META CLOUD API STATUS LISTENER (POST)
+# ==============================================================================
 @router.post("/webhook")
 async def receive_whatsapp_status(
     request: Request,
@@ -223,7 +497,9 @@ async def receive_whatsapp_status(
     return {"status": "ok"}
 
 
-# ================= ૪. બિલના WHATSAPP ડિલિવરી સ્ટેટસ ચેક કરો (GET) =================
+# ==============================================================================
+# ૭. બિલના WHATSAPP ડિલિવરી સ્ટેટસ ચેક કરો (GET)
+# ==============================================================================
 @router.get("/status/{invoice_id}", response_model=list[WhatsAppMessageStatusOut])
 def get_invoice_whatsapp_status(
     invoice_id: uuid.UUID,
@@ -242,7 +518,9 @@ def get_invoice_whatsapp_status(
     return records
 
 
-# ================= ૫. PDF ડાઉનલોડ કરવાનો એન્ડપોઇન્ટ (મોબાઈલ અને પ્રિન્ટ માટે) =================
+# ==============================================================================
+# ૮. INVOICE PDF ડાઉનલોડ કરવાનો એન્ડપોઇન્ટ
+# ==============================================================================
 @router.get("/invoices/{invoice_id}/download-pdf")
 def download_invoice_pdf_endpoint(
     invoice_id: uuid.UUID,

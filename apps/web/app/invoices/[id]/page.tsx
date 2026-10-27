@@ -3,49 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { ApiError, authBlobUrl, authGet, clearTokens } from "@/lib/api";
-
-// Strict TypeScript Interfaces for Canvas & jsPDF (0 ESLint Errors)
-interface CanvasProOptions {
-  scale?: number;
-  useCORS?: boolean;
-  logging?: boolean;
-  backgroundColor?: string | null;
-}
-
-interface JsPDFInstance {
-  internal: {
-    pageSize: {
-      getWidth: () => number;
-      getHeight: () => number;
-    };
-  };
-  addImage: (
-    imageData: string,
-    format: string,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ) => void;
-  save: (filename: string) => void;
-}
-
-type JsPDFConstructor = new (
-  orientation?: string,
-  unit?: string,
-  format?: string
-) => JsPDFInstance;
-
-declare global {
-  interface Window {
-    html2canvas?: (element: HTMLElement, options?: CanvasProOptions) => Promise<HTMLCanvasElement>;
-    jspdf?: {
-      jsPDF: JsPDFConstructor;
-    };
-    jsPDF?: JsPDFConstructor;
-  }
-}
+import { ApiError, authBlobUrl, authDownload, authGet, authPost, clearTokens } from "@/lib/api";
 
 type Item = {
   product_name: string;
@@ -80,7 +38,7 @@ type Customer = { name: string; mobile: string | null; address: string | null };
 
 const s = (v: unknown) => (typeof v === "string" ? v : "");
 
-// Convert number to Indian Currency Words
+// રકમને શબ્દોમાં (INR Words) ફેરવે છે
 function numberToWordsINR(num: number): string {
   const a = [
     "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
@@ -88,7 +46,7 @@ function numberToWordsINR(num: number): string {
   ];
   const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 
-  function inWords(n: number): string {
+  function inWords(n: int | number): string {
     if (n === 0) return "";
     if (n < 20) return a[n] + " ";
     if (n < 100) return b[Math.floor(n / 10)] + " " + a[n % 10] + " ";
@@ -108,31 +66,20 @@ function numberToWordsINR(num: number): string {
   return result + " Only";
 }
 
-// Safe Script Loader
-function loadScript(src: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve();
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = src;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.body.appendChild(script);
-  });
-}
-
 function InvoiceView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+
   const [inv, setInv] = useState<Invoice | null>(null);
   const [biz, setBiz] = useState<Business | null>(null);
   const [cust, setCust] = useState<Customer | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
   const [sig, setSig] = useState<string | null>(null);
   const [error, setError] = useState("");
+
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
+  const [waStatus, setWaStatus] = useState<string | null>(null);
 
   const onAuthError = useCallback(() => {
     clearTokens();
@@ -140,6 +87,12 @@ function InvoiceView() {
   }, [router]);
 
   useEffect(() => {
+    // 🛡️ સેફ્ટી ગાર્ડ: જો URL માં [id] હોય અથવા સાચો UUID ન હોય તો સીધા ઇન્વોઇસ લિસ્ટ પર રીડાયરેક્ટ કરો
+    if (!id || id === "[id]" || id.includes("[") || id.length < 30) {
+      router.replace("/invoices");
+      return;
+    }
+
     let cancelled = false;
     let logoUrl: string | null = null;
     let sigUrl: string | null = null;
@@ -163,10 +116,19 @@ function InvoiceView() {
         setCust(c);
         setLogo(logoUrl);
         setSig(sigUrl);
-      } catch (err) {
+
+        // WhatsApp લાઈવ ડિલિવરી સ્ટેટસ ચેક કરો (Sent, Delivered, Read)
+        authGet<Array<{ status: string }>>(`/api/v1/whatsapp/status/${id}`)
+          .then((records) => {
+            if (records && records.length > 0) {
+              setWaStatus(records[0].status);
+            }
+          })
+          .catch(() => {});
+      } catch (err: unknown) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) return onAuthError();
-        setError(err instanceof Error ? err.message : "Could not load invoice");
+        setError(err instanceof Error ? err.message : "બિલ લોડ થઈ શક્યું નથી.");
       }
     }
 
@@ -177,22 +139,45 @@ function InvoiceView() {
       if (logoUrl) URL.revokeObjectURL(logoUrl);
       if (sigUrl) URL.revokeObjectURL(sigUrl);
     };
-  }, [id, onAuthError]);
+  }, [id, onAuthError, router]);
 
-  // ૧-ક્લિક ડાયરેક્ટ WhatsApp (કોઈ પોપઅપ બોક્સ નહીં, સીધું WhatsApp ખુલશે!)
-  const sendWhatsApp = () => {
+  // ૧-ક્લિક સ્માર્ટ WhatsApp સેન્ડર (Cloud API + Auto Direct Chat Fallback)
+  const sendWhatsApp = async () => {
     if (!inv || !biz) return;
+    setIsSendingWhatsApp(true);
 
-    // આઈટમ્સનું સુંદર લિસ્ટ
-    const itemsList = inv.items
-      .map((it) => `• *${it.product_name}* (જથ્થો: ${Number(it.quantity)}) = ₹${Number(it.line_total).toFixed(2)}`)
-      .join("\n");
+    const phone = cust?.mobile || "";
 
-    const grandTotalVal = Number(inv.grand_total) || 0;
-    const paidVal = Number(inv.paid_amount) || 0;
-    const dueVal = Math.max(0, grandTotalVal - paidVal);
+    try {
+      const res = await authPost<{
+        success: boolean;
+        status: string;
+        message: string;
+        fallback_url?: string;
+      }>(`/api/v1/whatsapp/send-invoice/${id}`, {
+        phone: phone || "919999999999",
+      });
 
-    const msg = 
+      setWaStatus(res.status);
+
+      if (res.fallback_url) {
+        window.open(res.fallback_url, "_blank");
+      } else {
+        alert("✓ " + res.message);
+      }
+    } catch {
+      const itemsList = inv.items
+        .map(
+          (it) =>
+            `• *${it.product_name}* (જથ્થો: ${Number(it.quantity)}) = ₹${Number(it.line_total).toFixed(2)}`
+        )
+        .join("\n");
+
+      const grandTotalVal = Number(inv.grand_total) || 0;
+      const paidVal = Number(inv.paid_amount) || 0;
+      const dueVal = Math.max(0, grandTotalVal - paidVal);
+
+      const msg = 
 `🧾 *ટેક્સ ઇન્વોઇસ - ${s(biz.profile.name).toUpperCase()}*
 ━━━━━━━━━━━━━━━━━━━━
 👤 *ગ્રાહક:* ${cust ? cust.name : "Walk-in Customer"}
@@ -209,55 +194,29 @@ ${itemsList}
 
 🙏 *મુલાકાત બદલ ખૂબ ખૂબ આભાર! ફરી પધારશો.*`;
 
-    const encodedMsg = encodeURIComponent(msg);
+      const rawPhone = cust?.mobile ? cust.mobile.replace(/[^0-9]/g, "") : "";
+      const formattedPhone = rawPhone.length === 10 ? "91" + rawPhone : rawPhone;
 
-    // જો કસ્ટમરનો નંબર સેવ હોય તો સીધી એની ચેટ, નહિતર ડાયરેક્ટ WhatsApp એપ/વેબ ખુલશે
-    const rawPhone = cust?.mobile ? cust.mobile.replace(/[^0-9]/g, "") : "";
-    const formattedPhone = rawPhone.length === 10 ? "91" + rawPhone : rawPhone;
+      const whatsappUrl = formattedPhone
+        ? `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(msg)}`
+        : `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
 
-    const whatsappUrl = formattedPhone
-      ? `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodedMsg}`
-      : `https://api.whatsapp.com/send?text=${encodedMsg}`;
-
-    window.open(whatsappUrl, "_blank");
+      window.open(whatsappUrl, "_blank");
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
   };
 
-  // Direct High-Definition PDF Downloader (Tailwind v4 compatible, No 'lab' color error)
+  // હાઈ-ડેફિનેશન વેક્ટર PDF ડાઉનલોડર
   const downloadDirectPDF = async () => {
     if (!inv) return;
     setIsDownloadingPdf(true);
-
     try {
-      await Promise.all([
-        loadScript("https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js"),
-        loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"),
-      ]);
-
-      const element = document.getElementById("invoice-bill-card");
-      if (element && window.html2canvas) {
-        const canvas = await window.html2canvas(element, {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          backgroundColor: "#ffffff",
-        });
-
-        const imgData = canvas.toDataURL("image/jpeg", 0.98);
-        const JsPDFClass = window.jspdf?.jsPDF || window.jsPDF;
-        if (JsPDFClass) {
-          const pdf = new JsPDFClass("p", "mm", "a4");
-          const pageWidth = pdf.internal.pageSize.getWidth();
-          const pageHeight = pdf.internal.pageSize.getHeight();
-          const imgWidth = pageWidth - 14;
-          const imgHeight = (canvas.height * imgWidth) / canvas.width;
-          pdf.addImage(imgData, "JPEG", 7, 7, imgWidth, Math.min(imgHeight, pageHeight - 14));
-          pdf.save(`Invoice-${inv.invoice_number}.pdf`);
-          return;
-        }
-      }
-      window.print();
-    } catch (err) {
-      console.error("PDF Download error:", err);
+      await authDownload(
+        `/api/v1/whatsapp/invoices/${inv.id}/download-pdf`,
+        `Invoice-${inv.invoice_number}.pdf`
+      );
+    } catch {
       window.print();
     } finally {
       setIsDownloadingPdf(false);
@@ -266,13 +225,23 @@ ${itemsList}
 
   if (error) {
     return (
-      <main className="p-6">
-        <p className="rounded-lg bg-red-50 p-4 text-red-700">{error}</p>
+      <main className="min-h-screen bg-emerald-50/50 p-6 flex items-center justify-center">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-md border border-red-200 text-center">
+          <p className="text-red-700 font-bold mb-4">⚠️ {error}</p>
+          <Link
+            href="/invoices"
+            className="inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-xs font-bold text-white shadow hover:bg-emerald-800 transition"
+          >
+            ← બધા બિલોની યાદી પર જાઓ
+          </Link>
+        </div>
       </main>
     );
   }
 
-  if (!inv || !biz) return <p className="p-6 text-emerald-800 font-semibold">બિલ લોડ થઈ રહ્યું છે...</p>;
+  if (!inv || !biz) {
+    return <p className="p-8 text-emerald-800 font-bold text-center animate-pulse">બિલ લોડ થઈ રહ્યું છે...</p>;
+  }
 
   const p = biz.profile;
   const st = biz.settings;
@@ -289,7 +258,7 @@ ${itemsList}
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&margin=4&data=${encodeURIComponent(upiString)}`;
 
   return (
-    <main className="min-h-screen bg-emerald-50 p-4 md:p-8 print:bg-white print:p-0">
+    <main className="min-h-screen bg-emerald-50/50 p-4 md:p-8 print:bg-white print:p-0">
       {/* Print Specific CSS */}
       <style>{`
         @media print {
@@ -319,30 +288,57 @@ ${itemsList}
       <div className="mx-auto mb-6 flex max-w-4xl flex-wrap items-center justify-between gap-3 no-print">
         <Link
           href="/invoices"
-          className="rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-50 transition"
+          className="rounded-xl border border-emerald-700 bg-white px-4 py-2 text-xs font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 transition"
         >
           ← બધા બિલો (Invoices)
         </Link>
+
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* લાઈવ WhatsApp ડિલિવરી ટિક્સ બેજ */}
+          {waStatus && (
+            <span
+              className={`rounded-xl px-3 py-2 text-xs font-black uppercase flex items-center gap-1.5 shadow-sm border ${
+                waStatus === "read"
+                  ? "bg-blue-50 text-blue-700 border-blue-300"
+                  : waStatus === "delivered"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                  : waStatus === "sent"
+                  ? "bg-slate-100 text-slate-700 border-slate-300"
+                  : "bg-amber-50 text-amber-700 border-amber-300"
+              }`}
+            >
+              {waStatus === "read" && "👁️ Read (બ્લુ ટિક)"}
+              {waStatus === "delivered" && "✓✓ Delivered (પહોંચ્યું)"}
+              {waStatus === "sent" && "✓ Sent (મોકલાયું)"}
+              {waStatus === "fallback" && "💬 Chat Open"}
+            </span>
+          )}
+
+          {/* WhatsApp બટન */}
           <button
             type="button"
             onClick={sendWhatsApp}
-            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-emerald-700 transition"
+            disabled={isSendingWhatsApp}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-emerald-700 transition disabled:opacity-50"
           >
-            💬 WhatsApp પર મોકલો
+            {isSendingWhatsApp ? "મોકલાય છે..." : "💬 WhatsApp પર મોકલો"}
           </button>
+
+          {/* PDF ડાઉનલોડ બટન */}
           <button
             type="button"
             onClick={downloadDirectPDF}
             disabled={isDownloadingPdf}
-            className="flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-teal-800 disabled:opacity-50 transition"
+            className="flex items-center gap-1.5 rounded-xl bg-teal-700 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-teal-800 disabled:opacity-50 transition"
           >
             {isDownloadingPdf ? "⏳ PDF ડાઉનલોડ થાય છે..." : "📥 PDF ડાઉનલોડ"}
           </button>
+
+          {/* પ્રિન્ટ બટન */}
           <button
             type="button"
             onClick={() => window.print()}
-            className="flex items-center gap-1.5 rounded-lg bg-emerald-800 px-5 py-2.5 text-sm font-bold text-white shadow-lg hover:bg-emerald-900 transition"
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-800 px-5 py-2.5 text-xs font-bold text-white shadow-lg hover:bg-emerald-900 transition"
           >
             🖨️ પ્રિન્ટ (Print)
           </button>
@@ -597,7 +593,7 @@ ${itemsList}
 
 export default function InvoicePage() {
   return (
-    <Suspense fallback={<p className="p-6 text-emerald-800 font-semibold">બિલ લોડ થઈ રહ્યું છે...</p>}>
+    <Suspense fallback={<p className="p-6 text-emerald-800 font-semibold animate-pulse">બિલ લોડ થઈ રહ્યું છે...</p>}>
       <InvoiceView />
     </Suspense>
   );
