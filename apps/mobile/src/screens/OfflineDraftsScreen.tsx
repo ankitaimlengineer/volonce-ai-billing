@@ -9,15 +9,38 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getOfflineDrafts, removeOfflineDraft, syncOfflineDrafts, OfflineDraftInvoice } from "../offline";
+import {
+  getPendingOfflineInvoices,
+  removeOfflineInvoice,
+  syncAllOfflineInvoices,
+} from "../db";
 import { colors } from "../theme";
 
 interface Props {
   navigation: any;
 }
 
+interface LocalOfflineDraft {
+  id: string;
+  customer_name?: string;
+  customerName?: string;
+  customer_mobile?: string;
+  total_amount: number | string;
+  payload: {
+    customer_id?: string | null;
+    items: any[];
+    payments: any[];
+    notes?: string;
+  };
+  sync_status?: string;
+  syncStatus?: string;
+  last_error?: string;
+  lastError?: string;
+  created_at: string;
+}
+
 export default function OfflineDraftsScreen({ navigation }: Props) {
-  const [drafts, setDrafts] = useState<OfflineDraftInvoice[]>([]);
+  const [drafts, setDrafts] = useState<LocalOfflineDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
@@ -27,25 +50,39 @@ export default function OfflineDraftsScreen({ navigation }: Props) {
 
   const loadDrafts = async () => {
     setLoading(true);
-    const list = await getOfflineDrafts();
-    setDrafts(list);
-    setLoading(false);
+    try {
+      const list = await getPendingOfflineInvoices();
+      setDrafts(list || []);
+    } catch (err) {
+      console.log("Error reading SQLite offline drafts:", err);
+      setDrafts([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSyncAll = async () => {
     if (drafts.length === 0) return;
     setSyncing(true);
-    const res = await syncOfflineDrafts();
-    setSyncing(false);
-    loadDrafts();
+    try {
+      const res = await syncAllOfflineInvoices();
+      await loadDrafts();
 
-    if (res.failed === 0) {
-      Alert.alert("સફળતા! 🎉", `તમામ ${res.synced} બિલો સફળતાપૂર્વક સર્વર સાથે સિંક થઈ ગયા!`);
-    } else {
-      Alert.alert(
-        "આંશિક સિંક",
-        `${res.synced} બિલો સિંક થયા. ${res.failed} બિલોમાં ઇન્ટરનેટ કે સર્વર એરર આવી.`
-      );
+      if (res.failed === 0) {
+        Alert.alert(
+          "સફળતા! 🎉",
+          `તમામ ${res.synced} બિલો સફળતાપૂર્વક સર્વર સાથે સિંક થઈ ગયા છે!`
+        );
+      } else {
+        Alert.alert(
+          "આંશિક સિંક",
+          `${res.synced} બિલો સિંક થયા. ${res.failed} બિલોમાં ઇન્ટરનેટ કે સર્વર એરર આવી.`
+        );
+      }
+    } catch (err: any) {
+      Alert.alert("સિંક ભૂલ", err.message || "સર્વર સાથે કનેક્ટ થઈ શક્યું નથી.");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -56,8 +93,8 @@ export default function OfflineDraftsScreen({ navigation }: Props) {
         text: "ડિલીટ",
         style: "destructive",
         onPress: async () => {
-          await removeOfflineDraft(id);
-          loadDrafts();
+          await removeOfflineInvoice(id);
+          await loadDrafts();
         },
       },
     ]);
@@ -65,18 +102,23 @@ export default function OfflineDraftsScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← પાછા</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>ઑફલાઇન બિલો (Saved Drafts)</Text>
+        <Text style={styles.title}>ઑફલાઇન બિલો (SQLite Database)</Text>
       </View>
 
       {/* Sync Banner */}
       <View style={styles.banner}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.bannerTitle}>📶 નેટ વગર સેવ થયેલા બિલો ({drafts.length})</Text>
-          <Text style={styles.bannerSub}>જ્યારે મોબાઇલ ડેટા કે વાઇફાઇ ચાલુ હોય ત્યારે સિંક કરો</Text>
+          <Text style={styles.bannerTitle}>
+            📶 નેટ વગર સેવ થયેલા બિલો ({drafts.length})
+          </Text>
+          <Text style={styles.bannerSub}>
+            જ્યારે ઇન્ટરનેટ કે વાઇફાઇ ચાલુ હોય ત્યારે સિંક કરો
+          </Text>
         </View>
         <TouchableOpacity
           style={[styles.syncBtn, (syncing || drafts.length === 0) && { opacity: 0.5 }]}
@@ -98,28 +140,48 @@ export default function OfflineDraftsScreen({ navigation }: Props) {
           data={drafts}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 14 }}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.custName}>{item.customerName}</Text>
-                <Text style={styles.date}>
-                  🕒 {new Date(item.createdAt).toLocaleTimeString("en-IN")} • {item.payload.items.length} વસ્તુઓ
-                </Text>
-                {item.syncStatus === "failed" && (
-                  <Text style={styles.errorText}>⚠️ સિંક નિષ્ફળ: {item.lastError}</Text>
-                )}
-              </View>
+          renderItem={({ item }) => {
+            const custName = item.customer_name || item.customerName || "Walk-in Customer";
+            const itemCount = item.payload?.items?.length || 0;
+            const isFailed = (item.sync_status || item.syncStatus) === "failed";
+            const errorMsg = item.last_error || item.lastError;
+            const amt = Number(item.total_amount || 0).toFixed(2);
 
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={styles.amount}>₹ {item.totalAmount.toFixed(2)}</Text>
-                <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.delBtn}>
-                  <Text style={styles.delText}>ડિલીટ ✕</Text>
-                </TouchableOpacity>
+            let timeStr = "";
+            try {
+              timeStr = new Date(item.created_at).toLocaleTimeString("en-IN", {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+            } catch {
+              timeStr = "હમણાં";
+            }
+
+            return (
+              <View style={styles.card}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.custName}>{custName}</Text>
+                  <Text style={styles.date}>
+                    🕒 {timeStr} • {itemCount} વસ્તુઓ
+                  </Text>
+                  {isFailed && errorMsg ? (
+                    <Text style={styles.errorText}>⚠️ સિંક નિષ્ફળ: {errorMsg}</Text>
+                  ) : null}
+                </View>
+
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={styles.amount}>₹ {amt}</Text>
+                  <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.delBtn}>
+                    <Text style={styles.delText}>ડિલીટ ✕</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            );
+          }}
           ListEmptyComponent={
-            <Text style={styles.emptyText}>કોઈ પેન્ડિંગ ઓફલાઇન બિલ નથી. તમામ સિંક થયેલા છે! ✓</Text>
+            <Text style={styles.emptyText}>
+              કોઈ પેન્ડિંગ ઓફલાઇન બિલ નથી. તમામ બિલો સિંક થયેલા છે! ✓
+            </Text>
           }
         />
       )}
