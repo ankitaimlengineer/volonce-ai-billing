@@ -71,8 +71,9 @@ def match_customer_by_face(
             prompt,
         ]
 
+       # ✅ સાચું (Fixed)
         response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+            model="gemini-2.0-flash",
             contents=contents,
         )
 

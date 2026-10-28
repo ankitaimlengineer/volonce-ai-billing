@@ -26,7 +26,6 @@ from app.modules.reports.sales import router as sales_report_router
 from app.modules.reports.cashflow import router as cashflow_router
 from app.modules.ai.router import router as ai_router
 from app.modules.whatsapp.router import router as whatsapp_router
-from app.modules.whatsapp.router import router as whatsapp_router
 from app.modules.subscription.router import router as subscription_router
 from app.modules.admin.router import router as admin_router
 from app.modules.audit.router import router as audit_router
@@ -36,14 +35,20 @@ logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
+# CORS Configuration (લોકલહોસ્ટ, LAN IP અને પ્રોડક્શન માટે સેફ)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# તમામ મોડ્યુલ રાઉટર્સ (દરેક ફક્ત ૧ જ વખત)
 app.include_router(auth_router)
 app.include_router(business_router)
 app.include_router(branding_router)
@@ -63,8 +68,7 @@ app.include_router(reports_router)
 app.include_router(sales_report_router)
 app.include_router(cashflow_router)
 app.include_router(ai_router)
-app.include_router(whatsapp_router)
-app.include_router(whatsapp_router)
+app.include_router(whatsapp_router)       # ✅ હવે માત્ર એક જ વાર છે
 app.include_router(subscription_router)
 app.include_router(admin_router)
 app.include_router(notifications_router)
@@ -79,7 +83,6 @@ def health():
             conn.execute(text("SELECT 1"))
         db_ok = True
     except Exception as exc:
-        # Real error goes to the server log, not to the API response
         logger.error("Database health check failed: %s", exc)
 
     return {
