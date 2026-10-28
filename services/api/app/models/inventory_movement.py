@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base import Base, UUIDMixin
 
+# સ્ટોક મુવમેન્ટના તમામ માન્ય પ્રકારો (હવે ટ્રાન્સફર સપોર્ટ સાથે)
 MOVEMENT_TYPES = (
     "opening",
     "purchase",
@@ -27,6 +28,8 @@ MOVEMENT_TYPES = (
     "damage",
     "expired",
     "adjustment",
+    "transfer_in",
+    "transfer_out",
 )
 
 
@@ -35,20 +38,27 @@ class InventoryMovement(UUIDMixin, Base):
 
     __tablename__ = "inventory_movements"
     __table_args__ = (
+        # જથ્થો ક્યારેય શૂન્ય (0) ન હોવો જોઈએ
         CheckConstraint("quantity <> 0", name="ck_movement_qty_not_zero"),
+        
+        # માન્ય મુવમેન્ટ પ્રકારોનું વેલિડેશન
         CheckConstraint(
             "movement_type IN ('opening','purchase','sales_return','sale',"
-            "'purchase_return','damage','expired','adjustment')",
+            "'purchase_return','damage','expired','adjustment','transfer_in','transfer_out')",
             name="ck_movement_type",
         ),
-        # Direction must match the type (adjustment can be + or -)
+        
+        # સ્ટોક અંદર આવવાની (+) અને બહાર જવાની (-) દિશાનું વેલિડેશન
         CheckConstraint(
-            "(movement_type IN ('opening','purchase','sales_return') AND quantity > 0) OR "
-            "(movement_type IN ('sale','purchase_return','damage','expired') AND quantity < 0) OR "
+            "(movement_type IN ('opening','purchase','sales_return','transfer_in') AND quantity > 0) OR "
+            "(movement_type IN ('sale','purchase_return','damage','expired','transfer_out') AND quantity < 0) OR "
             "(movement_type = 'adjustment')",
             name="ck_movement_direction",
         ),
+        
+        # પર્ફોર્મન્સ ઇન્ડેક્સિસ
         Index("ix_movements_org_product", "organization_id", "product_id"),
+        Index("ix_movements_org_shop_product", "organization_id", "shop_id", "product_id"),
         Index("ix_movements_reference", "reference_type", "reference_id"),
     )
 
@@ -63,14 +73,14 @@ class InventoryMovement(UUIDMixin, Base):
     )
 
     movement_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    # Signed: + stock in, - stock out
+    # Signed: + stock in (જમા), - stock out (ઉધાર/બાદ)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
 
     # Optional batch / expiry (used by expiry tracking in step 4.5)
     batch_no: Mapped[str | None] = mapped_column(String(50))
     expiry_date: Mapped[date | None] = mapped_column(Date)
 
-    # Which bill / purchase created this movement (filled from Phase 5/6)
+    # Which bill / purchase / transfer created this movement
     reference_type: Mapped[str | None] = mapped_column(String(30))
     reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 

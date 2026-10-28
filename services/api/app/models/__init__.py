@@ -21,6 +21,7 @@ from app.models.purchase_return import PurchaseReturn, PurchaseReturnItem
 from app.models.refresh_token import RefreshToken
 from app.models.sales_return import SalesReturn, SalesReturnItem
 from app.models.shop import Shop
+from app.models.stock_transfer import StockTransfer, StockTransferItem
 from app.models.subscription import OrganizationSubscription, SubscriptionPlan
 from app.models.supplier import Supplier
 from app.models.supplier_ledger import SupplierLedger
@@ -49,6 +50,8 @@ __all__ = [
     "PurchaseReturnItem",
     "RefreshToken",
     "Shop",
+    "StockTransfer",
+    "StockTransferItem",
     "Supplier",
     "SupplierLedger",
     "User",

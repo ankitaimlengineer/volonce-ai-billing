@@ -30,6 +30,7 @@ from app.modules.subscription.router import router as subscription_router
 from app.modules.admin.router import router as admin_router
 from app.modules.audit.router import router as audit_router
 from app.modules.notifications.router import router as notifications_router
+from app.modules.inventory.transfers import router as stock_transfers_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -73,6 +74,7 @@ app.include_router(subscription_router)
 app.include_router(admin_router)
 app.include_router(notifications_router)
 app.include_router(audit_router)
+app.include_router(stock_transfers_router)
 
 
 @app.get("/api/v1/health")
