@@ -1,6 +1,7 @@
+import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 BusinessType = Literal["retail", "wholesale", "distributor", "manufacturer", "service", "other"]
 BusinessCategory = Literal[
@@ -9,6 +10,8 @@ BusinessCategory = Literal[
 ]
 InvoiceTemplate = Literal["professional", "minimal", "modern", "retail", "wholesale"]
 
+
+# ---------------- BUSINESS PROFILE SCHEMAS ----------------
 
 class ProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=200)
@@ -38,13 +41,45 @@ class SettingsUpdate(BaseModel):
 
 
 class ProfileResponse(ProfileUpdate):
+    model_config = ConfigDict(from_attributes=True)
     setup_completed: bool
 
 
 class SettingsResponse(SettingsUpdate):
-    pass
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BusinessResponse(BaseModel):
     profile: ProfileResponse
     settings: SettingsResponse
+
+
+# ---------------- 🏪 SHOPS & BRANCHES SCHEMAS ----------------
+
+class ShopBase(BaseModel):
+    name: str = Field(min_length=1, max_length=200, description="દુકાન, શાખા કે ગોડાઉનનું નામ")
+    address: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    pincode: str | None = Field(default=None, max_length=10)
+
+
+class ShopCreate(ShopBase):
+    is_default: bool = False
+
+
+class ShopUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    address: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    pincode: str | None = Field(default=None, max_length=10)
+    is_default: bool | None = None
+
+
+class ShopOut(ShopBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    is_default: bool

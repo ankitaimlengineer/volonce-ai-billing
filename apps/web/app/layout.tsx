@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
+import { AuthProvider } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "VOLONCE AI BILLING",
@@ -15,7 +16,10 @@ export default function RootLayout({
   return (
     <html lang="gu">
       <body className="antialiased">
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          {/* 🚀 સમગ્ર વેબ એપમાં ઓનર અને કેશિયરના રોલ કન્ટ્રોલ માટે AuthProvider */}
+          <AuthProvider>{children}</AuthProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

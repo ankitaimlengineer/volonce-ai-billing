@@ -1,8 +1,8 @@
 import asyncio
 import logging
-import urllib.parse
 import uuid
 from datetime import datetime, timezone
+from celery.exceptions import MaxRetriesExceededError
 from sqlalchemy import select
 
 from app.core.celery_app import celery_app
@@ -33,13 +33,15 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
     db = SessionLocal()
     invoice_id = uuid.UUID(invoice_id_str)
     org_id = uuid.UUID(org_id_str)
+    clean_phone = whatsapp_client.clean_phone_number(phone)
+    now = datetime.now(timezone.utc)
 
     try:
         invoice = db.scalar(
             select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == org_id)
         )
         if not invoice:
-            logger.error("Invoice %s not found in background task", invoice_id)
+            logger.error("Invoice %s not found in background worker", invoice_id)
             return
 
         items = db.scalars(select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)).all()
@@ -48,7 +50,7 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
         b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
         customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
 
-        # ૧. બેકગ્રાઉન્ડમાં PDF બનાવો
+        # ૧. બેકગ્રાઉન્ડમાં હાઈ-ડેફિનેશન PDF બનાવો
         pdf_bytes = generate_invoice_pdf_bytes(
             invoice=invoice,
             items=items,
@@ -59,7 +61,6 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
         )
 
         filename = f"Invoice-{invoice.invoice_number}.pdf"
-        clean_phone = whatsapp_client.clean_phone_number(phone)
         org_title = org.name if org and org.name else "STORE"
         grand_total_val = float(invoice.grand_total or 0)
 
@@ -71,36 +72,37 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
             f"ધન્યવાદ! ફરી પધારશો."
         )
 
-        now = datetime.now(timezone.utc)
-
-        # ૨. Meta WhatsApp API પર અપલોડ કરો અને મોકલો
+        # ૨. Meta WhatsApp Cloud API દ્વારા અસિંક્રોનસ મોકલો
         if whatsapp_client.is_configured:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            media_id = loop.run_until_complete(whatsapp_client.upload_pdf_media(pdf_bytes, filename))
-            if media_id:
-                res = loop.run_until_complete(
-                    whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+            async def _send_async():
+                media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
+                if not media_id:
+                    return None, {"success": False, "error": "WhatsApp media upload failed"}
+                res = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+                return media_id, res
+
+            media_id, res = asyncio.run(_send_async())
+
+            if res and res.get("success"):
+                wamid = res.get("data", {}).get("messages", [{}])[0].get("id")
+                msg_record = WhatsAppMessage(
+                    organization_id=org_id,
+                    invoice_id=invoice.id,
+                    recipient_phone=clean_phone,
+                    message_type="invoice_pdf",
+                    whatsapp_message_id=wamid,
+                    status="sent",
+                    sent_at=now,
                 )
-                loop.close()
+                db.add(msg_record)
+                db.commit()
+                logger.info("✓ Invoice %s sent via WhatsApp to %s (Msg ID: %s)", invoice.invoice_number, clean_phone, wamid)
+                return
+            else:
+                error_detail = res.get("error", "Unknown WhatsApp Error") if res else "Failed to send document"
+                raise RuntimeError(error_detail)
 
-                if res.get("success"):
-                    wamid = res.get("data", {}).get("messages", [{}])[0].get("id")
-                    msg_record = WhatsAppMessage(
-                        organization_id=org_id,
-                        invoice_id=invoice.id,
-                        recipient_phone=clean_phone,
-                        message_type="invoice_pdf",
-                        whatsapp_message_id=wamid,
-                        status="sent",
-                        sent_at=now,
-                    )
-                    db.add(msg_record)
-                    db.commit()
-                    logger.info("Invoice %s sent via WhatsApp to %s", invoice.invoice_number, clean_phone)
-                    return
-
-        # જો Cloud API ન હોય તો fallback રેકોર્ડ કરો
+        # જો Cloud API કન્ફિગર ન હોય તો fallback રેકોર્ડ કરો
         msg_record = WhatsAppMessage(
             organization_id=org_id,
             invoice_id=invoice.id,
@@ -112,8 +114,27 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
         db.commit()
 
     except Exception as exc:
-        logger.error("Error sending invoice WhatsApp: %s", exc)
+        logger.error("Error sending invoice WhatsApp (Attempt %s/%s): %s", self.request.retries + 1, self.max_retries, exc)
         db.rollback()
+
+        # જો બધા રિ-ટ્રાય પૂરા થઈ ગયા હોય તો ડેટાબેઝમાં Failed સ્ટેટસ સેવ કરો
+        if self.request.retries >= self.max_retries:
+            try:
+                db.add(
+                    WhatsAppMessage(
+                        organization_id=org_id,
+                        invoice_id=invoice_id,
+                        recipient_phone=clean_phone,
+                        message_type="invoice_pdf",
+                        status="failed",
+                        error_message=str(exc),
+                    )
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+            return
+
         raise self.retry(exc=exc, countdown=15)
     finally:
         db.close()
@@ -125,12 +146,15 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
     db = SessionLocal()
     customer_id = uuid.UUID(customer_id_str)
     org_id = uuid.UUID(org_id_str)
+    clean_phone = whatsapp_client.clean_phone_number(phone)
+    now = datetime.now(timezone.utc)
 
     try:
         customer = db.scalar(
             select(Customer).where(Customer.id == customer_id, Customer.organization_id == org_id)
         )
         if not customer:
+            logger.error("Customer %s not found in background worker", customer_id)
             return
 
         entries = db.scalars(
@@ -150,6 +174,7 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
         org = db.get(Organization, org_id)
         b_settings = db.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == org_id))
 
+        # ૧. ખાતાવહી સ્ટેટમેન્ટ PDF બનાવો
         pdf_bytes = generate_customer_ledger_pdf_bytes(
             customer=customer,
             ledger_rows=rows,
@@ -160,7 +185,6 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
         )
 
         filename = f"Statement-{customer.name.replace(' ', '_')}.pdf"
-        clean_phone = whatsapp_client.clean_phone_number(phone)
         org_title = org.name if org and org.name else "STORE"
 
         caption = (
@@ -170,34 +194,67 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
             f"જોડાયેલ PDF ફાઇલમાં તમામ લેવડ-દેવડની વિગત છે. આભાર!"
         )
 
-        now = datetime.now(timezone.utc)
-
+        # ૨. Meta WhatsApp Cloud API દ્વારા અસિંક્રોનસ મોકલો
         if whatsapp_client.is_configured:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            media_id = loop.run_until_complete(whatsapp_client.upload_pdf_media(pdf_bytes, filename))
-            if media_id:
-                res = loop.run_until_complete(
-                    whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
-                )
-                loop.close()
-                if res.get("success"):
-                    wamid = res.get("data", {}).get("messages", [{}])[0].get("id")
-                    db.add(
-                        WhatsAppMessage(
-                            organization_id=org_id,
-                            recipient_phone=clean_phone,
-                            message_type="ledger_statement",
-                            whatsapp_message_id=wamid,
-                            status="sent",
-                            sent_at=now,
-                        )
+            async def _send_ledger_async():
+                media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
+                if not media_id:
+                    return None, {"success": False, "error": "WhatsApp media upload failed"}
+                res = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+                return media_id, res
+
+            media_id, res = asyncio.run(_send_ledger_async())
+
+            if res and res.get("success"):
+                wamid = res.get("data", {}).get("messages", [{}])[0].get("id")
+                db.add(
+                    WhatsAppMessage(
+                        organization_id=org_id,
+                        recipient_phone=clean_phone,
+                        message_type="ledger_statement",
+                        whatsapp_message_id=wamid,
+                        status="sent",
+                        sent_at=now,
                     )
-                    db.commit()
-                    return
+                )
+                db.commit()
+                logger.info("✓ Ledger statement sent to %s (Msg ID: %s)", clean_phone, wamid)
+                return
+            else:
+                error_detail = res.get("error", "Unknown WhatsApp Error") if res else "Failed to send document"
+                raise RuntimeError(error_detail)
+
+        # જો Cloud API કન્ફિગર ન હોય તો fallback રેકોર્ડ કરો
+        db.add(
+            WhatsAppMessage(
+                organization_id=org_id,
+                recipient_phone=clean_phone,
+                message_type="ledger_statement",
+                status="fallback",
+            )
+        )
+        db.commit()
 
     except Exception as exc:
+        logger.error("Error sending ledger WhatsApp (Attempt %s/%s): %s", self.request.retries + 1, self.max_retries, exc)
         db.rollback()
+
+        if self.request.retries >= self.max_retries:
+            try:
+                db.add(
+                    WhatsAppMessage(
+                        organization_id=org_id,
+                        recipient_phone=clean_phone,
+                        message_type="ledger_statement",
+                        status="failed",
+                        error_message=str(exc),
+                    )
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+            return
+
         raise self.retry(exc=exc, countdown=15)
     finally:
         db.close()

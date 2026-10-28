@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import LanguageSwitcher from "./LanguageSwitcher";
 import NotificationBell from "./NotificationBell";
+import ShopSwitcher from "./ShopSwitcher";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 
 interface Props {
@@ -35,6 +36,9 @@ export default function AppHeader({ title, subtitle, backHref = "/dashboard" }: 
       </div>
 
       <div className="flex items-center gap-2.5">
+        {/* 🏪 મલ્ટી-શોપ / બ્રાન્ચ સ્વિચર ડ્રોપડાઉન */}
+        <ShopSwitcher />
+
         {/* 🌐 ગ્લોબલ ભાષા સ્વિચર */}
         <LanguageSwitcher />
 

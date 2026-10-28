@@ -6,8 +6,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, authGet, clearTokens } from "@/lib/api";
 import NotificationBell from "@/app/components/NotificationBell";
 import LanguageSwitcher from "@/app/components/LanguageSwitcher";
+import ShopSwitcher from "@/app/components/ShopSwitcher";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { translations } from "@/lib/i18n/translations";
+import { useAuth } from "@/lib/auth";
 import DashboardCharts from "./DashboardCharts";
 
 type DailyTrendPoint = {
@@ -44,7 +46,7 @@ type Summary = {
   payment_breakdown?: PaymentMethodPoint[];
 };
 
-type Range = { from: string; to: string } | null; // null = today (server default)
+type Range = { from: string; to: string } | null;
 type Preset = "today" | "yesterday" | "week" | "month" | "year" | "custom";
 
 const iso = (d: Date) => {
@@ -62,7 +64,7 @@ function rangeFor(p: Preset): Range {
   }
   if (p === "week") {
     const s = new Date(now);
-    const day = (now.getDay() + 6) % 7; // Monday start
+    const day = (now.getDay() + 6) % 7;
     s.setDate(now.getDate() - day);
     return { from: iso(s), to: iso(now) };
   }
@@ -106,12 +108,18 @@ const money = (v: string) => `₹${v}`;
 export default function DashboardPage() {
   const router = useRouter();
   const { t } = useLanguage();
+  const { user, hasRole, logout } = useAuth();
+
   const [preset, setPreset] = useState<Preset>("today");
   const [range, setRange] = useState<Range>(null);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState("");
+
+  // ઓનર અથવા મેનેજર છે કે નહીં તે ચકાસો
+  const isOwnerOrManager = hasRole("owner", "manager");
+  const isSuperAdmin = user?.role === "super_admin";
 
   const onAuthError = useCallback(() => {
     clearTokens();
@@ -168,34 +176,83 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-emerald-50/50 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
-        {/* Top Header with Language Switcher, Notification Bell, AI Counter & New Bill Buttons */}
+        {/* Top Header with Multi-Shop Switcher & Quick Buttons */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200/80 pb-4">
           <div>
-            <h1 className="text-2xl font-black text-emerald-950">{t("dashboard")}</h1>
-            <p className="text-xs text-gray-500 mt-0.5">{t("store_daily_records")}</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-black text-emerald-950">{t("dashboard")}</h1>
+              {user && (
+                <span
+                  className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border shadow-sm ${
+                    user.role === "owner"
+                      ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                      : user.role === "super_admin"
+                      ? "bg-purple-100 text-purple-900 border-purple-300"
+                      : user.role === "manager"
+                      ? "bg-blue-100 text-blue-800 border-blue-300"
+                      : "bg-amber-100 text-amber-900 border-amber-300"
+                  }`}
+                >
+                  {user.role === "owner"
+                    ? "👑 Owner"
+                    : user.role === "super_admin"
+                    ? "🛡️ Super Admin"
+                    : user.role === "manager"
+                    ? "💼 Manager"
+                    : "🧾 Cashier"}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {user?.full_name ? `નમસ્તે, ${user.full_name} • ` : ""}
+              {t("store_daily_records")}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* 🏪 મલ્ટી-શોપ / બ્રાન્ચ સ્વિચર ડ્રોપડાઉન */}
+            <ShopSwitcher />
+
             {/* 🌐 ૧-ક્લિક ભાષા સ્વિચર */}
             <LanguageSwitcher />
 
             {/* 🔔 Live Notification Bell */}
             <NotificationBell />
 
+            {/* સુપર એડમિન કન્સોલ લિંક */}
+            {isSuperAdmin && (
+              <Link
+                href="/admin"
+                className="rounded-xl bg-purple-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-purple-900 transition"
+              >
+                🛡️ Admin Portal
+              </Link>
+            )}
+
             {/* સ્માર્ટ AI કાઉન્ટર બટન */}
             <Link
               href="/billing/ai-counter"
-              className="flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2.5 text-sm font-black text-white shadow-lg hover:bg-emerald-900 transition"
+              className="flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2 text-sm font-black text-white shadow-lg hover:bg-emerald-900 transition"
             >
               {t("smart_ai_counter")}
             </Link>
 
             <Link
               href="/billing/new"
-              className="rounded-xl border-2 border-emerald-700 bg-white px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-50 shadow-sm transition"
+              className="rounded-xl border-2 border-emerald-700 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-50 shadow-sm transition"
             >
               {t("new_bill")}
             </Link>
+
+            {/* લૉગઆઉટ બટન */}
+            <button
+              type="button"
+              onClick={logout}
+              className="rounded-xl border border-red-300 bg-white px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 transition"
+              title="Logout"
+            >
+              🚪
+            </button>
           </div>
         </div>
 
@@ -249,7 +306,7 @@ export default function DashboardPage() {
               {t("period")}: {data.date_from === data.date_to ? data.date_from : `${data.date_from} થી ${data.date_to}`}
             </p>
 
-            {/* Overview Metrics Cards */}
+            {/* Overview Metrics Cards (RBAC Filtered) */}
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Card
                 title={t("today_sales")}
@@ -263,33 +320,49 @@ export default function DashboardPage() {
                 value={money(data.collections)}
                 tone="text-emerald-700"
               />
-              <Card title={t("purchases")} value={money(data.purchases)} />
-              <Card
-                title={t("gross_profit")}
-                value={money(data.gross_profit)}
-                tone={profitTone(data.gross_profit)}
-                sub={`${t("margin")}: ${data.margin_percent}%`}
-              />
-              <Card
-                title={t("expenses")}
-                value={money(data.expenses)}
-                tone="text-amber-700"
-              />
-              <Card
-                title={t("net_profit")}
-                value={money(data.net_profit)}
-                tone={profitTone(data.net_profit)}
-              />
-              <Card title={t("cogs")} value={money(data.cogs)} />
+
+              {/* ફક્ત Owner / Manager ને જ નફો, માર્જિન અને ખરીદી દેખાશે */}
+              {isOwnerOrManager ? (
+                <>
+                  <Card title={t("purchases")} value={money(data.purchases)} />
+                  <Card
+                    title={t("gross_profit")}
+                    value={money(data.gross_profit)}
+                    tone={profitTone(data.gross_profit)}
+                    sub={`${t("margin")}: ${data.margin_percent}%`}
+                  />
+                  <Card
+                    title={t("expenses")}
+                    value={money(data.expenses)}
+                    tone="text-amber-700"
+                  />
+                  <Card
+                    title={t("net_profit")}
+                    value={money(data.net_profit)}
+                    tone={profitTone(data.net_profit)}
+                  />
+                  <Card title={t("cogs")} value={money(data.cogs)} />
+                </>
+              ) : (
+                /* Cashier View: સરળ સ્ટોક એલર્ટ કાર્ડ */
+                <Card
+                  title={t("stock_alert")}
+                  value={`${data.low_stock} / ${data.out_of_stock}`}
+                  tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"}
+                  sub={t("attention_needed")}
+                />
+              )}
             </div>
 
-            {/* 📈 Recharts Graphical Charts Section */}
-            <div className="mt-7">
-              <DashboardCharts
-                trendData={data.daily_trend || []}
-                paymentData={data.payment_breakdown || []}
-              />
-            </div>
+            {/* 📈 Charts Section: માત્ર Owner/Manager માટે નફો અને ખર્ચાનો ગ્રાફ */}
+            {isOwnerOrManager && (
+              <div className="mt-7">
+                <DashboardCharts
+                  trendData={data.daily_trend || []}
+                  paymentData={data.payment_breakdown || []}
+                />
+              </div>
+            )}
 
             {/* Outstanding & Inventory Stock Status */}
             <h2 className="mt-7 text-xs font-extrabold uppercase tracking-wider text-gray-500">
@@ -304,14 +377,19 @@ export default function DashboardPage() {
                   sub={t("receivable_sub")}
                 />
               </Link>
-              <Link href="/suppliers" className="block">
-                <Card
-                  title={t("payable")}
-                  value={money(data.payable)}
-                  tone="text-amber-800"
-                  sub={t("payable_sub")}
-                />
-              </Link>
+
+              {/* વેપારી દેવું ફક્ત Owner/Manager ને દેખાશે */}
+              {isOwnerOrManager && (
+                <Link href="/suppliers" className="block">
+                  <Card
+                    title={t("payable")}
+                    value={money(data.payable)}
+                    tone="text-amber-800"
+                    sub={t("payable_sub")}
+                  />
+                </Link>
+              )}
+
               <Link href="/stock" className="block">
                 <Card
                   title={t("stock_value")}
@@ -320,29 +398,38 @@ export default function DashboardPage() {
                   sub={t("total_stock_value")}
                 />
               </Link>
-              <Link href="/stock" className="block">
-                <Card
-                  title={t("stock_alert")}
-                  value={`${data.low_stock} / ${data.out_of_stock}`}
-                  tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"}
-                  sub={t("attention_needed")}
-                />
-              </Link>
+
+              {isOwnerOrManager && (
+                <Link href="/stock" className="block">
+                  <Card
+                    title={t("stock_alert")}
+                    value={`${data.low_stock} / ${data.out_of_stock}`}
+                    tone={data.out_of_stock > 0 ? "text-red-600" : "text-gray-900"}
+                    sub={t("attention_needed")}
+                  />
+                </Link>
+              )}
             </div>
           </>
         )}
 
-        {/* Quick Module Navigation Links */}
+        {/* Quick Module Navigation Links (RBAC Filtered) */}
         <div className="mt-8 flex flex-wrap gap-2.5 border-t border-emerald-200/60 pt-6">
           <Link href="/invoices" className={nav}>{t("nav_invoices")}</Link>
           <Link href="/products" className={nav}>{t("nav_products")}</Link>
           <Link href="/stock" className={nav}>{t("nav_stock")}</Link>
           <Link href="/customers" className={nav}>{t("nav_customers")}</Link>
-          <Link href="/suppliers" className={nav}>{t("nav_suppliers")}</Link>
-          <Link href="/purchases" className={nav}>{t("nav_purchases")}</Link>
-          <Link href="/expenses" className={nav}>{t("nav_expenses")}</Link>
-          <Link href="/reports" className={nav}>{t("nav_reports")}</Link>
-          <Link href="/subscription" className={nav}>{t("nav_subscription")}</Link>
+
+          {/* આ સંવેદનશીલ લિંક્સ Cashier ને નહીં દેખાય */}
+          {isOwnerOrManager && (
+            <>
+              <Link href="/suppliers" className={nav}>{t("nav_suppliers")}</Link>
+              <Link href="/purchases" className={nav}>{t("nav_purchases")}</Link>
+              <Link href="/expenses" className={nav}>{t("nav_expenses")}</Link>
+              <Link href="/reports" className={nav}>{t("nav_reports")}</Link>
+              <Link href="/subscription" className={nav}>{t("nav_subscription")}</Link>
+            </>
+          )}
         </div>
       </div>
     </main>
