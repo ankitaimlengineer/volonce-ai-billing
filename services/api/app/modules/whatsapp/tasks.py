@@ -29,7 +29,7 @@ logger = logging.getLogger("celery.task")
 
 @celery_app.task(name="tasks.send_invoice_whatsapp", bind=True, max_retries=3)
 def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str: str):
-    """બેકગ્રાઉન્ડ ટાસ્ક: ઇન્વોઇસ PDF જનરેટ કરી WhatsApp પર મોકલે છે."""
+    """બેકગ્રાઉન્ડ ટાસ્ક: ઇન્વોઇસ PDF જનરેટ કરી WhatsApp પર મોકલે છે (Auto 24-hr Template Fallback સાથે)."""
     db = SessionLocal()
     invoice_id = uuid.UUID(invoice_id_str)
     org_id = uuid.UUID(org_id_str)
@@ -62,6 +62,7 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
 
         filename = f"Invoice-{invoice.invoice_number}.pdf"
         org_title = org.name if org and org.name else "STORE"
+        cust_name = customer.name if customer else "Customer"
         grand_total_val = float(invoice.grand_total or 0)
 
         caption = (
@@ -78,7 +79,23 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
                 media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
                 if not media_id:
                     return None, {"success": False, "error": "WhatsApp media upload failed"}
+
+                # પ્રથમ સામાન્ય ડાયરેક્ટ મેસેજ મોકલવાનો પ્રયાસ કરો
                 res = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+
+                # જો ૨૪ કલાકની વિન્ડો પૂરી થઈ ગઈ હોય (Error Code 131047), તો આપોઆપ Official Template વાપરો
+                if not res.get("success") and res.get("code") == 131047:
+                    logger.info("24-hr window expired. Switching to official WhatsApp Template for %s", clean_phone)
+                    res = await whatsapp_client.send_template_document(
+                        recipient_phone=clean_phone,
+                        media_id=media_id,
+                        filename=filename,
+                        customer_name=cust_name,
+                        invoice_number=invoice.invoice_number,
+                        grand_total=f"{grand_total_val:.2f}",
+                        store_name=org_title,
+                    )
+
                 return media_id, res
 
             media_id, res = asyncio.run(_send_async())
@@ -142,7 +159,7 @@ def send_invoice_whatsapp_task(self, invoice_id_str: str, phone: str, org_id_str
 
 @celery_app.task(name="tasks.send_ledger_whatsapp", bind=True, max_retries=3)
 def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str: str):
-    """બેકગ્રાઉન્ડ ટાસ્ક: ગ્રાહકની ખાતાવહી સ્ટેટમેન્ટ PDF WhatsApp પર મોકલે છે."""
+    """બેકગ્રાઉન્ડ ટાસ્ક: ગ્રાહકની ખાતાવહી સ્ટેટમેન્ટ PDF WhatsApp પર મોકલે છે (Auto 24-hr Template Fallback સાથે)."""
     db = SessionLocal()
     customer_id = uuid.UUID(customer_id_str)
     org_id = uuid.UUID(org_id_str)
@@ -186,11 +203,12 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
 
         filename = f"Statement-{customer.name.replace(' ', '_')}.pdf"
         org_title = org.name if org and org.name else "STORE"
+        due_str = f"{float(current_due):.2f}"
 
         caption = (
             f"નમસ્તે {customer.name} જી!\n"
             f"*{org_title}* તરફથી તમારી ખાતાવહીનું સ્ટેટમેન્ટ:\n"
-            f"💰 કુલ બાકી ઉધારી: *₹{float(current_due):.2f}*\n"
+            f"💰 કુલ બાકી ઉધારી: *₹{due_str}*\n"
             f"જોડાયેલ PDF ફાઇલમાં તમામ લેવડ-દેવડની વિગત છે. આભાર!"
         )
 
@@ -200,7 +218,23 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
                 media_id = await whatsapp_client.upload_pdf_media(pdf_bytes, filename)
                 if not media_id:
                     return None, {"success": False, "error": "WhatsApp media upload failed"}
+
+                # પ્રથમ સામાન્ય દસ્તાવેજ મોકલો
                 res = await whatsapp_client.send_invoice_document(clean_phone, media_id, filename, caption)
+
+                # જો ૨૪ કલાકની વિન્ડો પૂરી થઈ ગઈ હોય, તો ટેમ્પલેટ દ્વારા મોકલો
+                if not res.get("success") and res.get("code") == 131047:
+                    logger.info("24-hr window expired. Switching to Template for Statement to %s", clean_phone)
+                    res = await whatsapp_client.send_template_document(
+                        recipient_phone=clean_phone,
+                        media_id=media_id,
+                        filename=filename,
+                        customer_name=customer.name,
+                        invoice_number=f"Statement-{datetime.now().strftime('%Y%m')}",
+                        grand_total=due_str,
+                        store_name=org_title,
+                    )
+
                 return media_id, res
 
             media_id, res = asyncio.run(_send_ledger_async())
@@ -224,7 +258,7 @@ def send_ledger_whatsapp_task(self, customer_id_str: str, phone: str, org_id_str
                 error_detail = res.get("error", "Unknown WhatsApp Error") if res else "Failed to send document"
                 raise RuntimeError(error_detail)
 
-        # જો Cloud API કન્ફિગર ન હોય તો fallback રેકોર્ડ કરો
+        # Fallback રેકોર્ડ કરો
         db.add(
             WhatsAppMessage(
                 organization_id=org_id,

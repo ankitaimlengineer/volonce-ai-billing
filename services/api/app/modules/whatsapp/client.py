@@ -17,8 +17,8 @@ class WhatsAppCloudClient:
         return bool(self.token and self.phone_number_id)
 
     def clean_phone_number(self, phone: str) -> str:
-        """ફોન નંબરને E.164 ફોર્મેટમાં ('+' વગર) ફેરવે છે (દા.ત. 919876543210)."""
-        digits = "".join(filter(str.isdigit, phone))
+        """ફોન નંબરને સાફ કરીને E.164 ફોર્મેટમાં ('+' વગર) ફેરવે છે (દા.ત. 919876543210)."""
+        digits = "".join(filter(str.isdigit, str(phone or "")))
         if len(digits) == 10:
             return "91" + digits
         if digits.startswith("0") and len(digits) == 11:
@@ -50,6 +50,7 @@ class WhatsAppCloudClient:
                 logger.error("WhatsApp Media Upload Exception: %s", e)
                 return None
 
+    # ---------------- ૧. સામાન્ય ડાયરેક્ટ મેસેજ (૨૪ કલાકની વિન્ડો ચાલુ હોય ત્યારે) ----------------
     async def send_invoice_document(
         self,
         recipient_phone: str,
@@ -84,12 +85,149 @@ class WhatsAppCloudClient:
                 data = res.json()
                 if res.status_code in (200, 201):
                     return {"success": True, "data": data}
+
+                err_info = data.get("error", {})
+                err_code = err_info.get("code")
+
+                # Meta Error 131047 = ૨૪ કલાકની વિન્ડો પૂરી થઈ ગઈ છે (HSM Template જરૂરી)
+                if err_code == 131047:
+                    logger.warning("WhatsApp 24-hr window expired for %s. Template message required.", recipient_phone)
+                    return {"success": False, "error": "24h_window_expired", "code": 131047}
+
                 logger.error("WhatsApp Send Document Error: %s", res.text)
-                return {"success": False, "error": data.get("error", {}).get("message", res.text)}
+                return {"success": False, "error": err_info.get("message", res.text), "code": err_code}
             except Exception as e:
                 logger.error("WhatsApp Send Exception: %s", e)
                 return {"success": False, "error": str(e)}
 
+    # ---------------- ૨. સત્તાવાર મંજૂર થયેલ ટેમ્પલેટ દ્વારા બિલ PDF મોકલો (24-Hour Bypass) ----------------
+    async def send_template_document(
+        self,
+        recipient_phone: str,
+        media_id: str,
+        filename: str,
+        customer_name: str,
+        invoice_number: str,
+        grand_total: str,
+        store_name: str,
+        template_name: str = "volonce_invoice_delivery",
+        language_code: str = "gu",
+    ) -> dict:
+        """
+        Meta દ્વારા મંજૂર થયેલ Official Template દ્વારા PDF બિલ મોકલે છે.
+        આ મેસેજ ૨૪ કલાક પૂરા થયા પછી પણ ક્યારેય બ્લોક થતો નથી.
+        """
+        if not self.is_configured:
+            return {"success": False, "error": "WhatsApp API credentials not configured"}
+
+        url = f"{self.base_url}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self.clean_phone_number(recipient_phone),
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": language_code},
+                "components": [
+                    {
+                        "type": "header",
+                        "parameters": [
+                            {
+                                "type": "document",
+                                "document": {
+                                    "id": media_id,
+                                    "filename": filename,
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": str(customer_name or "Customer")},
+                            {"type": "text", "text": str(invoice_number)},
+                            {"type": "text", "text": str(grand_total)},
+                            {"type": "text", "text": str(store_name)},
+                        ],
+                    },
+                ],
+            },
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                res = await client.post(url, headers=headers, json=payload)
+                data = res.json()
+                if res.status_code in (200, 201):
+                    return {"success": True, "data": data}
+                logger.error("WhatsApp Template Send Error: %s", res.text)
+                return {"success": False, "error": data.get("error", {}).get("message", res.text)}
+            except Exception as e:
+                logger.error("WhatsApp Template Send Exception: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ---------------- ૩. સત્તાવાર મંજૂર થયેલ ટેમ્પલેટ દ્વારા પેમેન્ટ રીમાઇન્ડર ----------------
+    async def send_template_reminder(
+        self,
+        recipient_phone: str,
+        customer_name: str,
+        due_amount: str,
+        upi_id: str,
+        store_name: str,
+        template_name: str = "volonce_payment_reminder",
+        language_code: str = "gu",
+    ) -> dict:
+        """ઉધારી વસૂલાત માટેનું સત્તાવાર અપ્રૂવ્ડ WhatsApp રીમાઇન્ડર (૨૪ કલાક પછી પણ માન્ય)."""
+        if not self.is_configured:
+            return {"success": False, "error": "WhatsApp API credentials not configured"}
+
+        url = f"{self.base_url}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self.clean_phone_number(recipient_phone),
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": language_code},
+                "components": [
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": str(customer_name or "Customer")},
+                            {"type": "text", "text": str(due_amount)},
+                            {"type": "text", "text": str(upi_id or "store@upi")},
+                            {"type": "text", "text": str(store_name)},
+                        ],
+                    }
+                ],
+            },
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                res = await client.post(url, headers=headers, json=payload)
+                data = res.json()
+                if res.status_code in (200, 201):
+                    return {"success": True, "data": data}
+                logger.error("WhatsApp Reminder Template Error: %s", res.text)
+                return {"success": False, "error": data.get("error", {}).get("message", res.text)}
+            except Exception as e:
+                logger.error("WhatsApp Reminder Template Exception: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ---------------- ૪. સાદો ટેક્સ્ટ મેસેજ ----------------
     async def send_text_message(
         self,
         recipient_phone: str,

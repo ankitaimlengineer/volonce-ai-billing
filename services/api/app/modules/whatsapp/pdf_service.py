@@ -82,8 +82,59 @@ def _make_safe_qr(upi_url: str, size: float = 70):
         return None
 
 
+def _get_theme_palette(template_slug: str):
+    """૫ ડાયનેમિક ટેમ્પલેટ્સ માટે ReportLab કલર પેલેટ નક્કી કરે છે."""
+    slug = (template_slug or "professional").strip().lower()
+
+    if slug == "minimal":
+        return {
+            "primary": colors.HexColor("#1E293B"),         # Dark Slate
+            "primary_dark": colors.HexColor("#0F172A"),
+            "bg_accent": colors.HexColor("#F8FAFC"),        # Soft Light Slate
+            "border": colors.HexColor("#CBD5E1"),
+            "title_color": colors.HexColor("#0F172A"),
+            "tag": "MINIMAL TAX INVOICE",
+        }
+    elif slug == "modern":
+        return {
+            "primary": colors.HexColor("#0F766E"),         # Vibrant Teal
+            "primary_dark": colors.HexColor("#115E59"),
+            "bg_accent": colors.HexColor("#F0FDFA"),        # Light Cyan Tint
+            "border": colors.HexColor("#CCFBF1"),
+            "title_color": colors.HexColor("#0F766E"),
+            "tag": "MODERN DIGITAL TAX INVOICE",
+        }
+    elif slug == "retail":
+        return {
+            "primary": colors.HexColor("#18181B"),         # High-Contrast Zinc Black
+            "primary_dark": colors.HexColor("#09090B"),
+            "bg_accent": colors.HexColor("#FAFAFA"),        # Thermal Off-White
+            "border": colors.HexColor("#E4E4E7"),
+            "title_color": colors.HexColor("#18181B"),
+            "tag": "RETAIL POS TAX INVOICE",
+        }
+    elif slug == "wholesale":
+        return {
+            "primary": colors.HexColor("#334155"),         # Steel Slate / Blue
+            "primary_dark": colors.HexColor("#1E293B"),
+            "bg_accent": colors.HexColor("#F1F5F9"),
+            "border": colors.HexColor("#CBD5E1"),
+            "title_color": colors.HexColor("#334155"),
+            "tag": "WHOLESALE TRADE TAX INVOICE",
+        }
+    else:  # professional (default)
+        return {
+            "primary": colors.HexColor("#065F46"),         # Signature Emerald Green
+            "primary_dark": colors.HexColor("#044E3A"),
+            "bg_accent": colors.HexColor("#ECFDF5"),        # Light Mint Tint
+            "border": colors.HexColor("#E2E8F0"),
+            "title_color": colors.HexColor("#065F46"),
+            "tag": "OFFICIAL BUSINESS TAX INVOICE",
+        }
+
+
 # ==============================================================================
-# ૧. ટેક્સ ઇન્વોઇસ બિલ PDF GENERATOR
+# ૧. ટેક્સ ઇન્વોઇસ બિલ PDF GENERATOR (Template-Aware)
 # ==============================================================================
 def generate_invoice_pdf_bytes(
     invoice: Invoice,
@@ -106,12 +157,16 @@ def generate_invoice_pdf_bytes(
     story = []
     styles = getSampleStyleSheet()
 
-    c_primary = colors.HexColor("#065F46")
-    c_primary_dark = colors.HexColor("#044E3A")
-    c_bg_mint = colors.HexColor("#ECFDF5")
+    # પસંદ કરેલા ટેમ્પલેટ મુજબ કલર્સ લાવો
+    template_slug = settings.invoice_template if settings and settings.invoice_template else "professional"
+    palette = _get_theme_palette(template_slug)
+
+    c_primary = palette["primary"]
+    c_primary_dark = palette["primary_dark"]
+    c_bg_accent = palette["bg_accent"]
+    c_border = palette["border"]
     c_text_dark = colors.HexColor("#0F172A")
     c_text_muted = colors.HexColor("#64748B")
-    c_border = colors.HexColor("#E2E8F0")
 
     org_name = html.escape((org.name if org and org.name else "STORE").upper())
     org_address = html.escape(f"{org.address or ''}, {org.city or ''} {org.pincode or ''}".strip().strip(","))
@@ -132,22 +187,20 @@ def generate_invoice_pdf_bytes(
     if not logo_flowable:
         init_char = org_name[0] if org_name else "V"
         logo_flowable = Paragraph(
-            f"<font size=24 color='#065F46'><b>{init_char}</b></font>",
+            f"<font size=24 color='#FFFFFF'><b>{init_char}</b></font>",
             ParagraphStyle("Init", alignment=1)
         )
 
     top_center_title = Paragraph(
-        "<font size=8 color='#A7F3D0'><b>OFFICIAL BUSINESS TAX INVOICE</b></font>",
+        f"<font size=8 color='#FFFFFF'><b>{palette['tag']}</b></font>",
         ParagraphStyle("TopCenterTitle", alignment=1, leading=10)
     )
 
-    left_header_html = (
-        f"<font size=16 color='#FFFFFF'><b>{org_name}</b></font><br/>"
-    )
+    left_header_html = f"<font size=16 color='#FFFFFF'><b>{org_name}</b></font><br/>"
     if org_address:
-        left_header_html += f"<font size=8 color='#D1FAE5'>{org_address}</font><br/>"
+        left_header_html += f"<font size=8 color='#E2E8F0'>{org_address}</font><br/>"
     left_header_html += (
-        f"<font size=8 color='#D1FAE5'>Phone: {org_mobile}"
+        f"<font size=8 color='#E2E8F0'>Phone: {org_mobile}"
         + (f" | {org_email}" if org_email else "")
         + f"</font><br/><font size=8 color='#FEF08A'><b>{org_gst}</b></font>"
     )
@@ -166,7 +219,7 @@ def generate_invoice_pdf_bytes(
 
     header_right_html = (
         f"<font size=13 color='#FFFFFF'><b>{html.escape(str(invoice.invoice_number))}</b></font><br/>"
-        f"<font size=8.5 color='#D1FAE5'>Date: <b>{html.escape(str(invoice.invoice_date))}</b></font>"
+        f"<font size=8.5 color='#E2E8F0'>Date: <b>{html.escape(str(invoice.invoice_date))}</b></font>"
     )
     header_right_p = Paragraph(header_right_html, ParagraphStyle("HRight", parent=styles["Normal"], alignment=2, leading=12))
 
@@ -207,7 +260,7 @@ def generate_invoice_pdf_bytes(
         payment_method = html.escape(str(payments[0].method).upper())
 
     info_left = Paragraph(
-        f"<font size=7 color='#065F46'><b>BILL TO / CUSTOMER:</b></font><br/>"
+        f"<font size=7 color='#475569'><b>BILL TO / CUSTOMER:</b></font><br/>"
         f"<font size=11 color='#0F172A'><b>{cust_name}</b></font><br/>"
         f"<font size=8 color='#475569'>Phone: {cust_phone} | Address: {cust_addr}</font>",
         ParagraphStyle("CustInfo", parent=styles["Normal"], leading=11)
@@ -223,7 +276,7 @@ def generate_invoice_pdf_bytes(
     info_table = Table([[info_left, info_right]], colWidths=[365, 190])
     info_table.setStyle(
         TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), c_bg_mint),
+            ("BACKGROUND", (0, 0), (-1, -1), c_bg_accent),
             ("PADDING", (0, 0), (-1, -1), 6),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LINEBELOW", (0, 0), (-1, -1), 1.5, c_primary),
@@ -254,13 +307,13 @@ def generate_invoice_pdf_bytes(
         total_val = float(it.line_total or 0)
 
         table_rows.append([
-            Paragraph(f"<font color='#065F46'><b>{idx}</b></font>", ParagraphStyle("TD", alignment=1, fontSize=8)),
+            Paragraph(f"<b>{idx}</b>", ParagraphStyle("TD", alignment=1, fontSize=8)),
             Paragraph(f"<b>{p_name}</b>", ParagraphStyle("TDL", fontSize=8.5, textColor=c_text_dark)),
             Paragraph(f"{qty_val:.2f}", ParagraphStyle("TDC", alignment=1, fontSize=8)),
             Paragraph(f"{rate_val:.2f}", ParagraphStyle("TDR", alignment=2, fontSize=8)),
             Paragraph(f"{disc_val:.2f}", ParagraphStyle("TDR", alignment=2, fontSize=8, textColor=c_text_muted)),
-            Paragraph(f"{tax_val:.1f}%", ParagraphStyle("TDR", alignment=2, fontSize=8, textColor=c_primary)),
-            Paragraph(f"<b>{total_val:.2f}</b>", ParagraphStyle("TDRB", alignment=2, fontSize=8.5, textColor=c_primary)),
+            Paragraph(f"{tax_val:.1f}%", ParagraphStyle("TDR", alignment=2, fontSize=8)),
+            Paragraph(f"<b>{total_val:.2f}</b>", ParagraphStyle("TDRB", alignment=2, fontSize=8.5)),
         ])
 
     items_table = Table(table_rows, colWidths=[25, 235, 45, 65, 55, 45, 85])
@@ -279,16 +332,16 @@ def generate_invoice_pdf_bytes(
     # Amount in Words Box
     words_text = number_to_words_inr(grand_total_num)
     words_p = Paragraph(
-        f"<font size=7 color='#065F46'><b>AMOUNT IN WORDS:</b></font> "
+        f"<font size=7 color='#475569'><b>AMOUNT IN WORDS:</b></font> "
         f"<font size=8 color='#0F172A'><i>{html.escape(words_text)}</i></font>",
         styles["Normal"]
     )
     words_table = Table([[words_p]], colWidths=[555])
     words_table.setStyle(
         TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), c_bg_mint),
+            ("BACKGROUND", (0, 0), (-1, -1), c_bg_accent),
             ("PADDING", (0, 0), (-1, -1), 4),
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#A7F3D0")),
+            ("BOX", (0, 0), (-1, -1), 0.5, c_border),
         ])
     )
     story.append(words_table)
@@ -303,7 +356,7 @@ def generate_invoice_pdf_bytes(
     if qr_drawing:
         qr_block = [
             [qr_drawing],
-            [Paragraph("<font size=6 color='#065F46'><b>SCAN & PAY (UPI)</b></font>", ParagraphStyle("QRLbl", alignment=1))]
+            [Paragraph("<font size=6><b>SCAN & PAY (UPI)</b></font>", ParagraphStyle("QRLbl", alignment=1))]
         ]
         qr_table = Table(qr_block, colWidths=[70])
         qr_table.setStyle(TableStyle([
@@ -311,16 +364,16 @@ def generate_invoice_pdf_bytes(
             ("PADDING", (0, 0), (-1, -1), 1),
         ]))
     else:
-        qr_table = Paragraph("<font size=7 color='#065F46'><b>Scan & Pay UPI</b></font>", styles["Normal"])
+        qr_table = Paragraph("<font size=7><b>Scan & Pay UPI</b></font>", styles["Normal"])
 
     bank_name = html.escape(settings.bank_name if settings and settings.bank_name else "")
     bank_acc = html.escape(settings.bank_account_number if settings and settings.bank_account_number else "")
     bank_ifsc = html.escape(settings.bank_ifsc if settings and settings.bank_ifsc else "")
 
-    bank_text = f"<font size=7 color='#065F46'><b>BANK & PAYMENT DETAILS:</b></font><br/>"
+    bank_text = f"<font size=7 color='#475569'><b>BANK & PAYMENT DETAILS:</b></font><br/>"
     if bank_name or bank_acc:
         bank_text += f"<font size=7.5>Bank: <b>{bank_name}</b><br/>A/C No: <b>{bank_acc}</b><br/>IFSC: <b>{bank_ifsc}</b></font><br/>"
-    bank_text += f"<font size=7.5 color='#047857'>UPI ID: <b>{upi_id}</b></font>"
+    bank_text += f"<font size=7.5>UPI ID: <b>{upi_id}</b></font>"
 
     bank_p = Paragraph(bank_text, ParagraphStyle("BankP", parent=styles["Normal"], leading=9.5))
 
@@ -374,7 +427,7 @@ def generate_invoice_pdf_bytes(
     )
     terms_escaped = html.escape(raw_terms).replace("\n", "<br/>")
     terms_p = Paragraph(
-        f"<font size=7 color='#065F46'><b>TERMS & CONDITIONS:</b></font><br/>"
+        f"<font size=7 color='#475569'><b>TERMS & CONDITIONS:</b></font><br/>"
         f"<font size=7 color='#64748B'>{terms_escaped}</font>",
         ParagraphStyle("Terms", parent=styles["Normal"], leading=9)
     )
@@ -391,7 +444,7 @@ def generate_invoice_pdf_bytes(
     if not sig_flowable:
         sig_flowable = Paragraph(
             "<i>Digitally Signed</i>",
-            ParagraphStyle("SigItalic", alignment=1, fontSize=8, textColor=colors.HexColor("#065F46"))
+            ParagraphStyle("SigItalic", alignment=1, fontSize=8, textColor=c_primary)
         )
 
     sig_block = [
@@ -416,7 +469,7 @@ def generate_invoice_pdf_bytes(
     # Footer
     raw_footer = settings.invoice_footer if settings and settings.invoice_footer else "Thank you for your business! Visit again."
     footer_p = Paragraph(
-        f"<font size=7 color='#D1FAE5'>✓ Computer Generated Official GST Tax Invoice | {html.escape(raw_footer)} | <b>VOLONCE AI BILLING</b></font>",
+        f"<font size=7 color='#FFFFFF'>✓ Computer Generated GST Tax Invoice ({template_slug.upper()}) | {html.escape(raw_footer)} | <b>VOLONCE AI BILLING</b></font>",
         ParagraphStyle("Foot", alignment=1)
     )
     footer_table = Table([[footer_p]], colWidths=[555])
@@ -430,7 +483,7 @@ def generate_invoice_pdf_bytes(
     doc.build(story)
     buffer.seek(0)
     pdf_bytes = buffer.getvalue()
-    logger.info("PDF generated successfully: %d bytes", len(pdf_bytes))
+    logger.info("PDF generated successfully (%s theme): %d bytes", template_slug, len(pdf_bytes))
     return pdf_bytes
 
 
@@ -458,24 +511,26 @@ def generate_customer_ledger_pdf_bytes(
     story = []
     styles = getSampleStyleSheet()
 
-    c_primary = colors.HexColor("#065F46")
-    c_bg_mint = colors.HexColor("#ECFDF5")
+    template_slug = settings.invoice_template if settings and settings.invoice_template else "professional"
+    palette = _get_theme_palette(template_slug)
+
+    c_primary = palette["primary"]
+    c_bg_accent = palette["bg_accent"]
+    c_border = palette["border"]
     c_text_dark = colors.HexColor("#0F172A")
-    c_border = colors.HexColor("#E2E8F0")
 
     org_name = html.escape((org.name if org and org.name else "STORE").upper())
     org_address = html.escape(f"{org.address or ''}, {org.city or ''} {org.pincode or ''}".strip().strip(","))
     org_mobile = html.escape(f"+91 {org.mobile}" if org and org.mobile else "")
     org_gst = html.escape(f"GSTIN: {org.gst_number}" if org and org.gst_number else "")
 
-    # ૧. હેડર (Center Title + Store Info + Total Due)
     top_title = Paragraph(
-        "<font size=8 color='#A7F3D0'><b>OFFICIAL CUSTOMER KHATA STATEMENT (ખાતાવહી સ્ટેટમેન્ટ)</b></font>",
+        "<font size=8 color='#FFFFFF'><b>OFFICIAL CUSTOMER KHATA STATEMENT (ખાતાવહી સ્ટેટમેન્ટ)</b></font>",
         ParagraphStyle("TopTitle", alignment=1, leading=10),
     )
     left_header_html = (
         f"<font size=16 color='#FFFFFF'><b>{org_name}</b></font><br/>"
-        f"<font size=8 color='#D1FAE5'>{org_address} | Phone: {org_mobile}</font><br/>"
+        f"<font size=8 color='#E2E8F0'>{org_address} | Phone: {org_mobile}</font><br/>"
         f"<font size=8 color='#FEF08A'><b>{org_gst}</b></font>"
     )
     left_p = Paragraph(left_header_html, ParagraphStyle("HL", parent=styles["Normal"], leading=12))
@@ -483,7 +538,7 @@ def generate_customer_ledger_pdf_bytes(
     due_float = float(outstanding_balance)
     right_header_html = (
         f"<font size=10 color='#FFFFFF'><b>STATEMENT DATE:</b></font><br/>"
-        f"<font size=9 color='#D1FAE5'><b>{date.today().strftime('%d-%m-%Y')}</b></font><br/>"
+        f"<font size=9 color='#E2E8F0'><b>{date.today().strftime('%d-%m-%Y')}</b></font><br/>"
         f"<font size=8 color='#FFFFFF'>Total Outstanding:</font><br/>"
         f"<font size=13 color='#FEF08A'><b>Rs. {due_float:.2f}</b></font>"
     )
@@ -507,13 +562,12 @@ def generate_customer_ledger_pdf_bytes(
     )
     story.append(header_table)
 
-    # ૨. ગ્રાહકની વિગત અને બેલેન્સ કાર્ડ
     cust_name = html.escape(customer.name)
     cust_phone = html.escape(f"+91 {customer.mobile}" if customer.mobile else "N/A")
     cust_addr = html.escape(customer.address if customer.address else "Direct Customer")
 
     info_left = Paragraph(
-        f"<font size=7 color='#065F46'><b>CUSTOMER DETAILS (ગ્રાહકની વિગત):</b></font><br/>"
+        f"<font size=7 color='#475569'><b>CUSTOMER DETAILS (ગ્રાહકની વિગત):</b></font><br/>"
         f"<font size=12 color='#0F172A'><b>{cust_name}</b></font><br/>"
         f"<font size=8.5 color='#475569'>Mobile: <b>{cust_phone}</b> | Address: {cust_addr}</font>",
         ParagraphStyle("CustInfo", parent=styles["Normal"], leading=12),
@@ -527,7 +581,7 @@ def generate_customer_ledger_pdf_bytes(
     info_table = Table([[info_left, info_right]], colWidths=[365, 190])
     info_table.setStyle(
         TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), c_bg_mint),
+            ("BACKGROUND", (0, 0), (-1, -1), c_bg_accent),
             ("PADDING", (0, 0), (-1, -1), 6),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LINEBELOW", (0, 0), (-1, -1), 1.5, c_primary),
@@ -536,7 +590,6 @@ def generate_customer_ledger_pdf_bytes(
     story.append(info_table)
     story.append(Spacer(1, 8))
 
-    # ૩. લેવડ-દેવડનો હિસાબ (Ledger Table)
     table_rows = [
         [
             Paragraph("<b>તારીખ (Date)</b>", ParagraphStyle("TH", textColor=colors.white, fontSize=8)),
@@ -549,7 +602,7 @@ def generate_customer_ledger_pdf_bytes(
     ]
 
     for r in ledger_rows:
-        dt_str = r.created_at.strftime("%d-%m-%Y") if hasattr(r, "created_at") else str(r.get("created_at", ""))[:10]
+        dt_str = r.created_at.strftime("%d-%m-%Y") if hasattr(r, "created_at") else str(getattr(r, "created_at", ""))[:10]
         entry_label = (
             "🛍️ વેચાણ બિલ (Sale)" if r.entry_type == "sale"
             else "💵 જમા પેમેન્ટ (Payment)" if r.entry_type == "payment"
@@ -583,7 +636,6 @@ def generate_customer_ledger_pdf_bytes(
     story.append(ledger_table)
     story.append(Spacer(1, 8))
 
-    # ૪. Scan & Pay UPI QR Code + બેંક વિગત
     upi_id = html.escape((settings.upi_id if settings and settings.upi_id else "") or "store@upi")
     store_title = org.name or "Store"
     upi_qr_url = f"upi://pay?pa={upi_id}&pn={urllib.parse.quote(store_title)}&am={due_float:.2f}&cu=INR"
@@ -592,7 +644,7 @@ def generate_customer_ledger_pdf_bytes(
     if qr_drawing:
         qr_block = [
             [qr_drawing],
-            [Paragraph("<font size=6 color='#065F46'><b>SCAN TO PAY DUE</b></font>", ParagraphStyle("QRLbl", alignment=1))],
+            [Paragraph("<font size=6><b>SCAN TO PAY DUE</b></font>", ParagraphStyle("QRLbl", alignment=1))],
         ]
         qr_table = Table(qr_block, colWidths=[70])
         qr_table.setStyle(TableStyle([
@@ -600,16 +652,16 @@ def generate_customer_ledger_pdf_bytes(
             ("PADDING", (0, 0), (-1, -1), 1),
         ]))
     else:
-        qr_table = Paragraph("<font size=7 color='#065F46'><b>Scan & Pay UPI</b></font>", styles["Normal"])
+        qr_table = Paragraph("<font size=7><b>Scan & Pay UPI</b></font>", styles["Normal"])
 
     bank_name = html.escape(settings.bank_name if settings and settings.bank_name else "")
     bank_acc = html.escape(settings.bank_account_number if settings and settings.bank_account_number else "")
     bank_ifsc = html.escape(settings.bank_ifsc if settings and settings.bank_ifsc else "")
 
-    bank_text = f"<font size=7.5 color='#065F46'><b>ઉધારી ચૂકવણી માટે બેંક / UPI વિગત:</b></font><br/>"
+    bank_text = f"<font size=7.5 color='#475569'><b>ઉધારી ચૂકવણી માટે બેંક / UPI વિગત:</b></font><br/>"
     if bank_name or bank_acc:
         bank_text += f"<font size=7.5>Bank: <b>{bank_name}</b> | A/C: <b>{bank_acc}</b> | IFSC: <b>{bank_ifsc}</b></font><br/>"
-    bank_text += f"<font size=8 color='#047857'>UPI ID: <b>{upi_id}</b></font>"
+    bank_text += f"<font size=8>UPI ID: <b>{upi_id}</b></font>"
     bank_p = Paragraph(bank_text, ParagraphStyle("BankP", parent=styles["Normal"], leading=10))
 
     bottom_box = Table([[qr_table, bank_p]], colWidths=[75, 480])
@@ -622,9 +674,8 @@ def generate_customer_ledger_pdf_bytes(
     story.append(bottom_box)
     story.append(Spacer(1, 8))
 
-    # ૫. ફૂટર
     footer_p = Paragraph(
-        f"<font size=7 color='#D1FAE5'>✓ Computer Generated Official Customer Khata Statement | <b>{org_name}</b> | VOLONCE AI BILLING</font>",
+        f"<font size=7 color='#FFFFFF'>✓ Computer Generated Official Customer Khata Statement | <b>{org_name}</b> | VOLONCE AI BILLING</font>",
         ParagraphStyle("Foot", alignment=1),
     )
     footer_table = Table([[footer_p]], colWidths=[555])
