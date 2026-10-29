@@ -1,0 +1,137 @@
+name: VOLONCE AI BILLING - CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # -------------------------------------------------------------
+  # ૧. Backend API & Database Automated Tests
+  # -------------------------------------------------------------
+  backend-tests:
+    name: 🐍 FastAPI & Database Pytest
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: volonce_user
+          POSTGRES_PASSWORD: volonce_secret_pass_2026
+          POSTGRES_DB: volonce_billing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Check out repository code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/api/requirements.txt
+
+      - name: 📑 Run Alembic Database Migrations
+        working-directory: services/api
+        env:
+          POSTGRES_USER: volonce_user
+          POSTGRES_PASSWORD: volonce_secret_pass_2026
+          POSTGRES_DB: volonce_billing
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET_KEY: volonce_super_jwt_secret_key_2026
+        run: |
+          alembic upgrade head
+
+      - name: 🧪 Run Automated Pytest Test Suite
+        working-directory: services/api
+        env:
+          POSTGRES_USER: volonce_user
+          POSTGRES_PASSWORD: volonce_secret_pass_2026
+          POSTGRES_DB: volonce_billing
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET_KEY: volonce_super_jwt_secret_key_2026
+        run: |
+          pytest -v
+
+  # -------------------------------------------------------------
+  # ૨. Frontend Web (Next.js) Build Verification
+  # -------------------------------------------------------------
+  web-check:
+    name: 🌐 Next.js Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: apps/web/package.json
+
+      - name: 📦 Install Web Dependencies
+        working-directory: apps/web
+        run: npm install
+
+      - name: 🏗️ Verify Next.js Production Build
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: "http://localhost:8000"
+        run: npm run build
+
+  # -------------------------------------------------------------
+  # ૩. Mobile App (React Native Expo) Typecheck
+  # -------------------------------------------------------------
+  mobile-check:
+    name: 📱 Mobile App Typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: apps/mobile/package.json
+
+      - name: 📦 Install Mobile Dependencies
+        working-directory: apps/mobile
+        run: npm install
+
+      - name: 🔍 TypeScript Typecheck
+        working-directory: apps/mobile
+        run: npm run typecheck

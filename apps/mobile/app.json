@@ -4,27 +4,27 @@
     "slug": "volonce-ai-billing",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "volonce",
     "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.volonce.billing",
+      "infoPlist": {
+        "NSCameraUsageDescription": "પ્રોડક્ટ બારકોડ સ્કેન કરવા અને AI કેમેરા બિલિંગ માટે કેમેરાની પરવાનગી જરૂરી છે.",
+        "NSPhotoLibraryUsageDescription": "પ્રોડક્ટ અને બિલના ફોટા પસંદ કરવા માટે ફોટો ગેલેરીની પરવાનગી આપો."
+      }
+    },
     "android": {
       "package": "com.volonce.billing",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ]
-    },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.volonce.billing",
-      "infoPlist": {
-        "NSCameraUsageDescription": "પ્રોડક્ટ બારકોડ સ્કેન કરવા અને AI બિલિંગ માટે કેમેરાની પરવાનગી જરૂરી છે.",
-        "NSPhotoLibraryUsageDescription": "પ્રોડક્ટ અને બિલના ફોટા પસંદ કરવા માટે ગેલેરીની પરવાનગી આપો."
-      }
     },
     "plugins": [
       "expo-secure-store",
-      "expo-status-bar",
-      "expo-sharing",
       "expo-sqlite",
       [
         "expo-camera",
@@ -38,6 +38,11 @@
           "photosPermission": "પ્રોડક્ટના ફોટા પસંદ કરવા માટે ફોટો ગેલેરીની પરવાનગી આપો."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "026cbcfe-6b6e-44da-8390-fd99d5c0b0bc"
+      }
+    }
   }
 }
