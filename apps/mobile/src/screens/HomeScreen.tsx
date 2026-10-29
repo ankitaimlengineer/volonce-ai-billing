@@ -84,7 +84,7 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
           <ActivityIndicator size="large" color={colors.primary || "#047857"} style={{ marginTop: 40 }} />
         ) : (
           <>
-            {/* Quick Actions (મુખ્ય કામગીરી બટન્સ) */}
+            {/* Quick Actions (મુખ્ય કામગીરી બટન્સ - વેબ જેવા જ ૧૦૦% સેમ ટુ સેમ) */}
             <Text style={styles.sectionTitle}>ઝડપી કામગીરી (Quick Actions)</Text>
             <View style={styles.actionRow}>
               {/* ૧. મુખ્ય ફીચર: AI કેમેરા બિલિંગ */}
@@ -147,6 +147,40 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
                   <Text style={styles.smallBtnText}>📝 ખર્ચા (Expenses)</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* ૬. 🚀 બિલોનો ઇતિહાસ અને નાણાકીય રિપોર્ટ્સ (સેમ ટુ સેમ વેબ જેવા) */}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#065F46" }]}
+                  onPress={() => navigation?.navigate?.("Invoices")}
+                >
+                  <Text style={styles.smallBtnText}>🧾 બધા બિલો (Invoices)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#D97706" }]}
+                  onPress={() => navigation?.navigate?.("Reports")}
+                >
+                  <Text style={styles.smallBtnText}>📊 રિપોર્ટ્સ (P&L / Sales)</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* ૭. 🚀 ગોડાઉન ટ્રાન્સફર અને સબસ્ક્રિપ્શન પ્લાન્સ */}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#0D9488" }]}
+                  onPress={() => navigation?.navigate?.("StockTransfers")}
+                >
+                  <Text style={styles.smallBtnText}>🔄 ગોડાઉન ટ્રાન્સફર</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: "#4338CA" }]}
+                  onPress={() => navigation?.navigate?.("Subscription")}
+                >
+                  <Text style={styles.smallBtnText}>💎 સબસ્ક્રિપ્શન પ્લાન્સ</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Quick Stats Grid */}
@@ -154,18 +188,26 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
 
             <View style={styles.grid}>
               {/* Sales Card */}
-              <View style={[styles.card, { borderLeftColor: "#10B981" }]}>
+              <TouchableOpacity
+                style={[styles.card, { borderLeftColor: "#10B981" }]}
+                onPress={() => navigation?.navigate?.("Invoices")}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.cardLabel}>આજનું વેચાણ (Sales)</Text>
                 <Text style={styles.cardValue}>₹ {Number(summary?.sales || 0).toLocaleString("en-IN")}</Text>
-                <Text style={styles.cardSub}>{summary?.bills || 0} બિલો બન્યા</Text>
-              </View>
+                <Text style={styles.cardSub}>{summary?.bills || 0} બિલો બન્યા (જુઓ →)</Text>
+              </TouchableOpacity>
 
               {/* Net Profit Card */}
-              <View style={[styles.card, { borderLeftColor: "#3B82F6" }]}>
+              <TouchableOpacity
+                style={[styles.card, { borderLeftColor: "#3B82F6" }]}
+                onPress={() => navigation?.navigate?.("Reports")}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.cardLabel}>ચોખ્ખો નફો (Net Profit)</Text>
                 <Text style={styles.cardValue}>₹ {Number(summary?.net_profit || 0).toLocaleString("en-IN")}</Text>
-                <Text style={styles.cardSub}>Margin: {summary?.margin_percent || 0}%</Text>
-              </View>
+                <Text style={styles.cardSub}>Margin: {summary?.margin_percent || 0}% (P&L →)</Text>
+              </TouchableOpacity>
 
               {/* Receivables Card */}
               <TouchableOpacity
@@ -197,14 +239,23 @@ export default function HomeScreen({ user, onLogout, navigation }: HomeScreenPro
             {/* Inventory Alerts */}
             <Text style={styles.sectionTitle}>સ્ટોક એલર્ટ (Stock Alerts)</Text>
             <View style={styles.stockRow}>
-              <View style={[styles.alertCard, { backgroundColor: "#FEF2F2" }]}>
+              <TouchableOpacity
+                style={[styles.alertCard, { backgroundColor: "#FEF2F2" }]}
+                onPress={() => navigation?.navigate?.("Products")}
+                activeOpacity={0.7}
+              >
                 <Text style={[styles.alertNumber, { color: "#EF4444" }]}>{summary?.out_of_stock || 0}</Text>
                 <Text style={styles.alertText}>સ્ટોક ખલાસ (Out of Stock)</Text>
-              </View>
-              <View style={[styles.alertCard, { backgroundColor: "#FFFBEB" }]}>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.alertCard, { backgroundColor: "#FFFBEB" }]}
+                onPress={() => navigation?.navigate?.("Products")}
+                activeOpacity={0.7}
+              >
                 <Text style={[styles.alertNumber, { color: "#F59E0B" }]}>{summary?.low_stock || 0}</Text>
                 <Text style={styles.alertText}>ઓછો સ્ટોક (Low Stock)</Text>
-              </View>
+              </TouchableOpacity>
             </View>
           </>
         )}
@@ -234,7 +285,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEE2E2",
   },
   logoutText: { color: "#EF4444", fontWeight: "600", fontSize: 12 },
-  scrollContent: { padding: 16 },
+  scrollContent: { padding: 16, paddingBottom: 30 },
   offlineBanner: {
     backgroundColor: "#FEF3C7",
     padding: 12,

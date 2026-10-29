@@ -201,6 +201,42 @@ export type CustomerFaceMatchResponse = {
   } | null;
 };
 
+// ---------------- BUSINESS SETUP TYPES ----------------
+export type RegisterPayload = {
+  business_name: string;
+  full_name: string;
+  email: string;
+  mobile: string;
+  password: string;
+};
+
+export type BusinessProfilePayload = {
+  name: string;
+  owner_name?: string;
+  business_type: string;
+  business_category: string;
+  mobile: string;
+  email?: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  gst_number?: string;
+};
+
+export type BusinessSettingsPayload = {
+  bank_name?: string;
+  bank_account_holder?: string;
+  bank_account_number?: string;
+  bank_ifsc?: string;
+  upi_id?: string;
+  terms_and_conditions?: string;
+  invoice_footer?: string;
+  invoice_template: string;
+  invoice_prefix: string;
+  invoice_number_padding: number;
+};
+
 function message(data: unknown, fallback: string): string {
   const detail = (data as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return detail;
@@ -281,6 +317,22 @@ export async function authRequest<T>(
 
 // ---------------- AUTHENTICATION APIS ----------------
 
+// ૧. નવું એકાઉન્ટ રજીસ્ટર કરો
+export async function register(payload: RegisterPayload): Promise<TokenResponse> {
+  const t = await parse<TokenResponse>(
+    await raw("POST", "/api/v1/auth/register", {
+      business_name: payload.business_name.trim(),
+      full_name: payload.full_name.trim(),
+      email: payload.email.trim(),
+      mobile: payload.mobile.trim() || null,
+      password: payload.password,
+    })
+  );
+  await saveTokens(t.access_token, t.refresh_token);
+  return t;
+}
+
+// ૨. લૉગિન કરો
 export async function login(email: string, password: string): Promise<TokenResponse> {
   const t = await parse<TokenResponse>(
     await raw("POST", "/api/v1/auth/login", { email: email.trim(), password })
@@ -300,6 +352,54 @@ export async function logout() {
   }
   await clearTokens();
 }
+
+// ---------------- BUSINESS SETUP APIS (વેબ જેવા જ સેટઅપ સ્ટેપ્સ) ----------------
+
+// ૧. બિઝનેસ પ્રોફાઇલ ડેટા લાવો
+export const getBusinessProfile = () =>
+  authRequest<any>("GET", "/api/v1/business/profile");
+
+// ૨. Step 1: બિઝનેસ પ્રોફાઇલ વિગત સેવ કરો
+export const updateBusinessProfile = (data: BusinessProfilePayload) =>
+  authRequest<any>("PUT", "/api/v1/business/profile", data);
+
+// ૩. Step 2: લોગો અથવા સહી અપલોડ કરો
+export async function uploadBusinessBranding(
+  kind: "logo" | "signature",
+  imageUri: string
+): Promise<any> {
+  let token = await getAccess();
+  const fileBlob = await uriToBlob(imageUri);
+
+  const upload = async (bearerToken: string | null) => {
+    const formData = new FormData();
+    formData.append("file", fileBlob, `${kind}.jpg`);
+
+    return await fetch(`${API_URL}/api/v1/business/${kind}`, {
+      method: "POST",
+      headers: {
+        Authorization: bearerToken ? `Bearer ${bearerToken}` : "",
+      },
+      body: formData,
+    });
+  };
+
+  let res = await upload(token);
+  if (res.status === 401 && (await refreshTokens())) {
+    token = await getAccess();
+    res = await upload(token);
+  }
+
+  return parse<any>(res);
+}
+
+// ૪. Step 3: ઇન્વોઇસ અને બેંક સેટિંગ્સ સેવ કરો
+export const updateBusinessSettings = (data: BusinessSettingsPayload) =>
+  authRequest<any>("PUT", "/api/v1/business/settings", data);
+
+// ૫. સેટઅપ ફાઇનલ કન્ફર્મ કરો (Complete Setup)
+export const completeBusinessSetup = () =>
+  authRequest<any>("POST", "/api/v1/business/complete-setup");
 
 // ---------------- BUSINESS / REPORT / POS APIS ----------------
 
@@ -630,3 +730,80 @@ export async function addImageToCameraSession(sessionId: string, imageUri: strin
 export async function getSessionDraftBill(sessionId: string) {
   return authRequest<any>("GET", `/api/v1/ai/sessions/${sessionId}/draft`);
 }
+
+// ---------------- ૧૦૦% વેબ જેવા જ સમાન નવા ફીચર્સ (INVOICES, REPORTS, SUBSCRIPTION, TRANSFERS) ----------------
+
+// ૧. પાછલા તમામ બિલોની યાદી મેળવો (Invoices History)
+export const getInvoices = (limit = 100) =>
+  authRequest<any[]>("GET", `/api/v1/invoices?limit=${limit}`);
+
+// ૨. ચોક્કસ બિલની વિગત લાવો
+export const getInvoiceDetail = (invoiceId: string) =>
+  authRequest<any>("GET", `/api/v1/invoices/${invoiceId}`);
+
+// ૩. વેચાણ રિપોર્ટ (Sales Report)
+export const getSalesReport = (from?: string, to?: string) => {
+  const q = from && to ? `?date_from=${from}&date_to=${to}` : "";
+  return authRequest<any>("GET", `/api/v1/reports/sales${q}`);
+};
+
+// ૪. નફો અને નુકસાન રિપોર્ટ (Profit & Loss Statement)
+export const getProfitLossReport = (from?: string, to?: string) => {
+  const q = from && to ? `?date_from=${from}&date_to=${to}` : "";
+  return authRequest<any>("GET", `/api/v1/reports/profit-loss${q}`);
+};
+
+// ૫. કેશ ફ્લો રિપોર્ટ (Cash Flow Report)
+export const getCashFlowReport = (from?: string, to?: string) => {
+  const q = from && to ? `?date_from=${from}&date_to=${to}` : "";
+  return authRequest<any>("GET", `/api/v1/reports/cash-flow${q}`);
+};
+
+// ૬. સબસ્ક્રિપ્શન સ્ટેટસ લાવો
+export const getSubscriptionStatus = () =>
+  authRequest<any>("GET", "/api/v1/subscription/status");
+
+// ૭. તમામ સબસ્ક્રિપ્શન પ્લાન લિસ્ટ
+export const getSubscriptionPlans = () =>
+  authRequest<any[]>("GET", "/api/v1/subscription/plans");
+
+// ૮. વાઉચર અથવા કૂપન કોડ રિડીમ કરો
+export const redeemVoucherCode = (code: string) =>
+  authRequest<any>("POST", "/api/v1/subscription/redeem-code", {
+    code: code.trim().toUpperCase(),
+  });
+
+// ૯. ગોડાઉન સ્ટોક ટ્રાન્સફર્સ હિસ્ટ્રી
+export const getStockTransfers = (limit = 50) =>
+  authRequest<any[]>("GET", `/api/v1/inventory/transfers?limit=${limit}`);
+
+// ૧૦. નવો સ્ટોક ટ્રાન્સફર નોંધો (Godown to Shop)
+export const createStockTransfer = (payload: any) => {
+  const idempotencyKey =
+    "trf-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 7);
+  return authRequest<any>("POST", "/api/v1/inventory/transfers", payload, {
+    "Idempotency-Key": idempotencyKey,
+  });
+};
+
+// ૧૧. તમામ શાખાઓ અને ગોડાઉનની યાદી મેળવો
+export const getShops = () =>
+  authRequest<any[]>("GET", "/api/v1/business/shops");
+
+// ૧૨. સક્રિય શાખા/ગોડાઉન ૧-ક્લિકમાં સ્વિચ કરો
+export const setDefaultShop = (shopId: string) =>
+  authRequest<any>("POST", `/api/v1/business/shops/${shopId}/set-default`);
+
+// ૧૩. માલની એક્સપાયરી રિપોર્ટ લાવો
+export const getExpiryReport = (days = 30) =>
+  authRequest<any>("GET", `/api/v1/inventory/expiry?days=${days}`);
+
+// ૧૪. મેન્યુઅલ સ્ટોક એડજસ્ટ કરો (Damage, Expired, Opening)
+export const createStockMovement = (payload: {
+  product_id: string;
+  movement_type: "opening" | "adjustment" | "damage" | "expired";
+  quantity: number | string;
+  note?: string;
+  batch_no?: string;
+  expiry_date?: string;
+}) => authRequest<any>("POST", "/api/v1/inventory/movements", payload);

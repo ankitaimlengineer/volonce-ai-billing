@@ -9,8 +9,11 @@ import { getMe, logout, Me, Customer } from "./src/api";
 import { getAccess } from "./src/storage";
 import { colors } from "./src/theme";
 
-// તમામ સ્ક્રીન્સ
+// તમામ સ્ક્રીન્સ (ઓથેન્ટિકેશન & સેટઅપ)
 import LoginScreen from "./src/screens/LoginScreen";
+import BusinessSetupScreen from "./src/screens/BusinessSetupScreen";
+
+// મુખ્ય બિલિંગ અને એકાઉન્ટિંગ સ્ક્રીન્સ
 import HomeScreen from "./src/screens/HomeScreen";
 import ProductsScreen from "./src/screens/ProductsScreen";
 import BillingScreen from "./src/screens/BillingScreen";
@@ -21,6 +24,12 @@ import ExpensesScreen from "./src/screens/ExpensesScreen";
 import SuppliersScreen from "./src/screens/SuppliersScreen";
 import PurchasesScreen from "./src/screens/PurchasesScreen";
 import OfflineDraftsScreen from "./src/screens/OfflineDraftsScreen";
+
+// 🚀 વેબ જેવા જ ૧૦૦% સમાન નવા ફીચર્સ
+import InvoicesScreen from "./src/screens/InvoicesScreen";
+import ReportsScreen from "./src/screens/ReportsScreen";
+import SubscriptionScreen from "./src/screens/SubscriptionScreen";
+import StockTransfersScreen from "./src/screens/StockTransfersScreen";
 
 export type RootStackParamList = {
   Home: undefined;
@@ -33,6 +42,10 @@ export type RootStackParamList = {
   Suppliers: undefined;
   Purchases: undefined;
   OfflineDrafts: undefined;
+  Invoices: undefined;        // 👈 ૧૧. બિલોનો ઇતિહાસ
+  Reports: undefined;         // 👈 ૧૨. નાણાકીય રિપોર્ટ્સ (P&L, Sales, Cashflow)
+  Subscription: undefined;    // 👈 ૧૩. સબસ્ક્રિપ્શન અને કૂપન રિડીમ
+  StockTransfers: undefined;  // 👈 ૧૪. ગોડાઉન સ્ટોક ટ્રાન્સફર
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -80,9 +93,19 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
+
+      {/* ૧. જો યુઝર લૉગિન ન હોય તો Login / Register સ્ક્રીન બતાવો */}
       {!user ? (
         <LoginScreen onLoggedIn={checkAuth} />
+      ) : !user.setup_completed ? (
+        /* ૨. જો નવો યુઝર રજીસ્ટર થયો હોય પણ સેટઅપ બાકી હોય, તો ૩-સ્ટેપ સેટઅપ વિઝાર્ડ બતાવો */
+        <BusinessSetupScreen
+          user={user}
+          onComplete={checkAuth}
+          onLogout={handleLogout}
+        />
       ) : (
+        /* ૩. સેટઅપ કમ્પ્લીટ હોય તો જ મુખ્ય નેવિગેટર અને ડેશબોર્ડ ખુલશે */
         <NavigationContainer>
           <Stack.Navigator
             initialRouteName="Home"
@@ -174,6 +197,19 @@ export default function App() {
 
             {/* ૧૦. ઓફલાઇન બિલો (Offline Drafts) સ્ક્રીન */}
             <Stack.Screen name="OfflineDrafts" component={OfflineDraftsScreen} />
+
+            {/* ---------------- 🚀 વેબ જેવા જ ૧૦૦% સેમ નવા મોડ્યુલ્સ ---------------- */}
+            {/* ૧૧. બિલોનો ઇતિહાસ & રીપ્રિન્ટ (Invoices History) */}
+            <Stack.Screen name="Invoices" component={InvoicesScreen} />
+
+            {/* ૧૨. નાણાકીય રિપોર્ટ્સ (P&L, Sales & Cash Flow) */}
+            <Stack.Screen name="Reports" component={ReportsScreen} />
+
+            {/* ૧૩. સબસ્ક્રિપ્શન અને કૂપન કોડ (Subscription & Vouchers) */}
+            <Stack.Screen name="Subscription" component={SubscriptionScreen} />
+
+            {/* ૧૪. ગોડાઉન સ્ટોક ટ્રાન્સફર (Stock Transfers) */}
+            <Stack.Screen name="StockTransfers" component={StockTransfersScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       )}
