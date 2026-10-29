@@ -79,21 +79,45 @@ async def send_invoice_via_whatsapp(
         except Exception as e:
             logger.warning("Celery queue failed, falling back to direct chat: %s", e)
 
-    # જો Cloud API સેટ ન હોય તો ડાયરેક્ટ WhatsApp Chat લિંક બનાવો
+    # જો Cloud API સેટ ન હોય તો ૧૦૦% વિગતવાર WhatsApp Chat મેસેજ બનાવો
     org = db.get(Organization, org_id)
     org_title = org.name if org and org.name else "STORE"
-    grand_total_val = float(invoice.grand_total or 0)
+    customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
+    items = db.scalars(select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)).all()
 
-    caption = (
-        f"નમસ્તે! *{org_title}* તરફથી તમારું બિલ:\n"
-        f"📄 બિલ નં: *{invoice.invoice_number}*\n"
-        f"📅 તારીખ: {invoice.invoice_date}\n"
-        f"💰 કુલ રકમ: *₹{grand_total_val:.2f}*\n"
-        f"ધન્યવાદ! ફરી પધારશો."
+    # વસ્તુઓની વિગતવાર યાદી
+    items_list_str = "\n".join([
+        f"• *{it.product_name}* (જથ્થો: {float(it.quantity)}) = ₹{float(it.line_total):.2f}"
+        for it in (items or [])
+    ]) if items else "• જનરલ આઇટમ્સ"
+
+    subtotal_val = float(invoice.subtotal or 0)
+    tax_total_val = float(invoice.tax_total or 0)
+    grand_total_val = float(invoice.grand_total or 0)
+    paid_val = float(invoice.paid_amount or 0)
+    due_val = max(0.0, grand_total_val - paid_val)
+    payment_status_str = "ચૂકતે (PAID)" if due_val <= 0 else f"બાકી: ₹{due_val:.2f}"
+    cust_name_str = customer.name if customer else "Walk-in Customer"
+
+    # તમે માંગેલું ૧૦૦% વિગતવાર સુંદર ફોર્મેટ
+    full_bill_msg = (
+        f"🧾 *ટેક્સ ઇન્વોઇસ - {org_title.upper()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *ગ્રાહક:* {cust_name_str}\n"
+        f"📄 *બિલ નં:* {invoice.invoice_number}\n"
+        f"📅 *તારીખ:* {invoice.invoice_date}\n\n"
+        f"🛍️ *ખરીદેલી વસ્તુઓની વિગત:*\n"
+        f"{items_list_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💵 *સબટોટલ:* ₹{subtotal_val:.2f}\n"
+        f"📊 *GST ટેક્સ:* ₹{tax_total_val:.2f}\n"
+        f"💰 *કુલ રકમ:* *₹{grand_total_val:.2f}*\n"
+        f"✅ *પેમેન્ટ સ્થિતિ:* {payment_status_str}\n\n"
+        f"🙏 *મુલાકાત બદલ ખૂબ ખૂબ આભાર! ફરી પધારશો.*"
     )
 
-    encoded_caption = urllib.parse.quote(caption)
-    fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
+    encoded_caption = urllib.parse.quote(full_bill_msg)
+    fallback_url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={encoded_caption}"
 
     msg_record = WhatsAppMessage(
         organization_id=org_id,
@@ -160,7 +184,7 @@ async def send_customer_ledger_via_whatsapp(
         f"કૃપા કરીને આ રકમ ચૂકવવા વિનંતી. આભાર!"
     )
     encoded_caption = urllib.parse.quote(caption)
-    fallback_url = f"https://wa.me/{clean_phone}?text={encoded_caption}"
+    fallback_url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={encoded_caption}"
 
     msg_record = WhatsAppMessage(
         organization_id=org_id,
@@ -248,7 +272,7 @@ async def send_customer_payment_reminder(
 
     # Fallback Direct WhatsApp Chat
     encoded = urllib.parse.quote(reminder_text)
-    fallback_url = f"https://wa.me/{clean_phone}?text={encoded}"
+    fallback_url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={encoded}"
     msg_record = WhatsAppMessage(
         organization_id=org_id,
         recipient_phone=clean_phone,

@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 import httpx
 from app.core.config import settings
 
@@ -7,16 +8,32 @@ logger = logging.getLogger("uvicorn.error")
 
 class WhatsAppCloudClient:
     def __init__(self):
-        self.token = settings.whatsapp_api_token
-        self.phone_number_id = settings.whatsapp_phone_number_id
+        self.token = (settings.whatsapp_api_token or "").strip()
+        self.phone_number_id = (settings.whatsapp_phone_number_id or "").strip()
         self.base_url = f"https://graph.facebook.com/v21.0/{self.phone_number_id}"
 
     @property
     def is_configured(self) -> bool:
-        """ચકાસે છે કે Meta WhatsApp Cloud API ના ક્રેડેન્શિયલ્સ સેટ થયેલા છે કે નહીં."""
-        return bool(self.token and self.phone_number_id)
+        """
+        ચકાસે છે કે Meta WhatsApp Cloud API ના અસલ (Real) ક્રેડેન્શિયલ્સ સેટ થયેલા છે કે નહીં.
+        જો .env માં હજુ ડમી/પ્લેસહોલ્ડર કી હોય તો આ આપોઆપ False આપશે જેથી સિસ્ટમ અટકે નહીં.
+        """
+        if not self.token or not self.phone_number_id:
+            return False
 
-    def clean_phone_number(self, phone: str) -> str:
+        # ડમી પ્લેસહોલ્ડર કીઝ ચેક કરો
+        dummy_markers = [
+            "YourMetaPermanentSystemUserToken",
+            "100000000000000",
+            "EAAG...YourMetaPermanentSystemUserToken",
+            "your_token_here",
+        ]
+        if any(marker in self.token for marker in dummy_markers) or self.phone_number_id == "100000000000000":
+            return False
+
+        return True
+
+    def clean_phone_number(self, phone: str | None) -> str:
         """ફોન નંબરને સાફ કરીને E.164 ફોર્મેટમાં ('+' વગર) ફેરવે છે (દા.ત. 919876543210)."""
         digits = "".join(filter(str.isdigit, str(phone or "")))
         if len(digits) == 10:
@@ -24,6 +41,14 @@ class WhatsAppCloudClient:
         if digits.startswith("0") and len(digits) == 11:
             return "91" + digits[1:]
         return digits
+
+    def get_direct_chat_link(self, phone: str | None, text_message: str) -> str:
+        """૧-ક્લિકમાં ડાયરેક્ટ WhatsApp Web / App ખોલવા માટેની યુનિવર્સલ લિંક બનાવે છે."""
+        clean = self.clean_phone_number(phone)
+        encoded_text = urllib.parse.quote(text_message)
+        if clean:
+            return f"https://api.whatsapp.com/send?phone={clean}&text={encoded_text}"
+        return f"https://api.whatsapp.com/send?text={encoded_text}"
 
     async def upload_pdf_media(self, pdf_bytes: bytes, filename: str) -> str | None:
         """PDF દસ્તાવેજ Meta WhatsApp Media સર્વર પર અપલોડ કરે છે અને Media ID મેળવે છે."""
@@ -44,7 +69,7 @@ class WhatsAppCloudClient:
                 res = await client.post(url, headers=headers, files=files)
                 if res.status_code in (200, 201):
                     return res.json().get("id")
-                logger.error("Meta Media Upload Error: %s", res.text)
+                logger.error("Meta Media Upload Error (%s): %s", res.status_code, res.text)
                 return None
             except Exception as e:
                 logger.error("WhatsApp Media Upload Exception: %s", e)
@@ -89,9 +114,9 @@ class WhatsAppCloudClient:
                 err_info = data.get("error", {})
                 err_code = err_info.get("code")
 
-                # Meta Error 131047 = ૨૪ કલાકની વિન્ડો પૂરી થઈ ગઈ છે (HSM Template જરૂરી)
+                # Meta Error Code 131047 = ૨૪ કલાકની વિન્ડો પૂરી થઈ ગઈ છે
                 if err_code == 131047:
-                    logger.warning("WhatsApp 24-hr window expired for %s. Template message required.", recipient_phone)
+                    logger.warning("WhatsApp 24-hr window expired for %s. Official Template required.", recipient_phone)
                     return {"success": False, "error": "24h_window_expired", "code": 131047}
 
                 logger.error("WhatsApp Send Document Error: %s", res.text)
@@ -153,7 +178,7 @@ class WhatsAppCloudClient:
                             {"type": "text", "text": str(customer_name or "Customer")},
                             {"type": "text", "text": str(invoice_number)},
                             {"type": "text", "text": str(grand_total)},
-                            {"type": "text", "text": str(store_name)},
+                            {"type": "text", "text": str(store_name or "STORE")},
                         ],
                     },
                 ],
@@ -208,7 +233,7 @@ class WhatsAppCloudClient:
                             {"type": "text", "text": str(customer_name or "Customer")},
                             {"type": "text", "text": str(due_amount)},
                             {"type": "text", "text": str(upi_id or "store@upi")},
-                            {"type": "text", "text": str(store_name)},
+                            {"type": "text", "text": str(store_name or "STORE")},
                         ],
                     }
                 ],
@@ -233,7 +258,7 @@ class WhatsAppCloudClient:
         recipient_phone: str,
         text_message: str,
     ) -> dict:
-        """ગ્રાહકને WhatsApp પર સાદો ટેક્સ્ટ મેસેજ / પેમેન્ટ રીમાઇન્ડર મોકલે છે."""
+        """ગ્રાહકને WhatsApp પર સાદો ટેક્સ્ટ મેસેજ મોકલે છે."""
         if not self.is_configured:
             return {"success": False, "error": "WhatsApp API credentials not configured"}
 
